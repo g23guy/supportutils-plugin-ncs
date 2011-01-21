@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.6
+VER=1.95.10
 MODATE="2011 Jan 21"
 
 ##############################################################################
@@ -285,13 +285,22 @@ title
 get_credentials
 ldap_check
 
+if rpm -q novell-business-continuity-cluster &>/dev/null; then
+	echo "ERROR: Unsupported Configuration - Novell Business Continuity Cluster" | tee -a $LOG_SUMMARY
+	echo | tee -a $LOG_SUMMARY
+	((TOTAL_ERRORS++))
+	show_summary
+	exit 1
+fi
+
 ldap_cmd $LOG_VOL_RES "(objectclass=nCSVolumeResource)"
 echo | tee -a $LOG_SUMMARY
 
 OBJ_VOL_RESOURCES=$(grep -i ^cn: $LOGROOT/$LOG_VOL_RES | awk '{print $2}')
 # echo; echo "OBJ_VOL_RESOURCES = $OBJ_VOL_RESOURCES"; echo
 if [ -z "$OBJ_VOL_RESOURCES" ]; then
-	echo "ERROR: No nCSVolumeResource objects found"; echo
+	echo "ERROR: No nCSVolumeResource objects found" | tee -a $LOG_SUMMARY
+	echo | tee -a $LOG_SUMMARY
 	((TOTAL_ERRORS++))
 	show_summary
 	exit 1

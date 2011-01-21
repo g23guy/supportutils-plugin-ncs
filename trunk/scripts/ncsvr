@@ -1,0 +1,438 @@
+#!/bin/bash
+VER=1.91
+MODATE="2011 Jan 21"
+
+##############################################################################
+#  ncsvr - Novell Cluster Service Volume Resource Plugin for Supportconfig
+#  Copyright (C) 2011 Novell, Inc.
+#
+#  This plugin performs an authenticated, non-destructive LDAP search of
+#  the eDirectory database for Novell Cluster Services volume resources. 
+#  Information about each eDirectory object associated with the volume 
+#  resource is used to help confirm the proper object association. It also 
+#  checks for expected attributes on each of the objects.
+#
+##############################################################################
+#
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation; either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+#
+#  Authors/Contributors:
+#     Jason Record (jrecord@novell.com)
+#
+##############################################################################
+
+
+# global variables
+##############################################################################
+if [ -x /usr/ldaptools/bin/ldapsearch ]; then
+	LDAP_BIN=/usr/ldaptools/bin/ldapsearch
+elif [ -x /opt/novell/eDirectory/bin/ldapsearch ]; then
+	LDAP_BIN=/opt/novell/eDirectory/bin/ldapsearch 
+elif [ -x /usr/bin/ldapsearch ]; then
+	LDAP_BIN=/usr/bin/ldapsearch
+else
+	LDAP_BIN="" 
+fi
+DATESTAMP=$(date +%y%m%d)
+TIMESTAMP=$(date +%H%M%S)
+HOSTNAME=$(hostname)
+test -z "$HOSTNAME" && HOSTNAME=unknown
+LOGROOT="${LOG:="/var/log/nts_ncsvr_${HOSTNAME}_${DATESTAMP}_${TIMESTAMP}"}/plugin-ncsvr"
+LOG_VOL_RES="volume_resources.txt"
+LOG_SUMMARY="${LOGROOT}/Analysis.txt"
+VRSEQ=0
+TOTAL_ERRORS=0
+PATH=/bin:/sbin:$PATH
+export PATH
+
+# function definitions
+##############################################################################
+
+title() {
+	echo "---------------------------------------------------------" | tee -a $LOG_SUMMARY
+	echo " Novell Open Enterprise Server" | tee -a $LOG_SUMMARY
+	echo " NCS Volume Resource Plugin for Supportconfig" | tee -a $LOG_SUMMARY
+	echo " Version: $VER ($MODATE)" | tee -a $LOG_SUMMARY
+	echo " Date:    $(date +"%D %T")" | tee -a $LOG_SUMMARY
+	echo "---------------------------------------------------------" | tee -a $LOG_SUMMARY
+}
+
+get_credentials() {
+	KEYFOUND=1
+	DERFILE=".$(namconfig get preferred-server | cut -d= -f2).der"
+	CERT_DIRECTORIES="/var/lib/novell-lum /var/nam"
+	for CERT_DIR in $CERT_DIRECTORIES
+	do
+		AUTHKEY="${CERT_DIR}/${DERFILE}"
+		if [ -s $AUTHKEY ]; then
+			echo "Using $AUTHKEY" | tee -a $LOG_SUMMARY
+			KEYFOUND=1
+			break
+		else
+			echo "File not found: $AUTHKEY" | tee -a $LOG_SUMMARY
+			KEYFOUND=0
+		fi
+	done
+
+	if [ $KEYFOUND = 0 ]; then
+		echo "ERROR: Missing *.der file for TLS authentication in $CERT_DIRECTORIES"; echo
+		((TOTAL_ERRORS++))
+		show_summary
+		exit 1
+	fi
+
+	if [ -x $(which namconfig 2>/dev/null) ]; then
+		PREF_SERVER=$(namconfig get preferred-server | cut -d= -f2)
+		test -z "$PREF_SERVER" && PREF_SERVER=localhost
+	else
+		PREF_SERVER=localhost
+	fi
+	
+	if [ -z "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
+		if [ -x /opt/novell/ncs/bin/ncs-casautil ]; then
+			echo "Using CASA Credentials" | tee -a $LOG_SUMMARY
+			NCSVR_ADMIN=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | head -1)
+			NCSVR_PASS=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | tail -1)
+		else
+			echo "ERROR: Unable to access cluster credentials" | tee -a $LOG_SUMMARY
+			echo "       Consider setting NCSVR_ADMIN and NCSVR_PASS in the environment first." | tee -a $LOG_SUMMARY
+			echo "       For example, run:" | tee -a $LOG_SUMMARY
+			echo "       NCSVR_ADMIN=\"cn=admin,o=novell\" NCSVR_PASS=\"novell\" supportconfig" | tee -a $LOG_SUMMARY
+			echo | tee -a $LOG_SUMMARY
+			exit 2
+		fi
+	else
+		echo "Using Environment Credentials: NCSVR_ADMIN and NCSVR_PASS" | tee -a $LOG_SUMMARY
+	fi
+	echo | tee -a $LOG_SUMMARY
+	if [ -z "$NCSVR_ADMIN" -a -n "$NCSVR_PASS" ]; then
+		echo "ERROR: NCSVR_ADMIN undefined" | tee -a $LOG_SUMMARY
+		echo "       Define both NCSVR_ADMIN and NCSVR_PASS" | tee -a $LOG_SUMMARY
+		echo | tee -a $LOG_SUMMARY
+		exit 4
+	elif [ -n "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
+		echo "ERROR: NCSVR_PASS undefined" | tee -a $LOG_SUMMARY
+		echo "       Define both NCSVR_ADMIN and NCSVR_PASS" | tee -a $LOG_SUMMARY
+		echo | tee -a $LOG_SUMMARY
+		exit 6
+	fi
+
+	AUTH_OPTIONS="-e $AUTHKEY -D $NCSVR_ADMIN -w $NCSVR_PASS -h $PREF_SERVER"
+}
+
+ldap_cmd() {
+	OUTFILE="${LOGROOT}/$1"
+	shift
+	echo "#------------------------------------------------#" >> $OUTFILE
+	echo "# $LDAP_BIN ${AUTH_OPTIONS} \"$1\"" | sed -e "s/-w $NCSVR_PASS/-w \*\*\*\*/" >> $OUTFILE
+	echo "Fetching $1" | tee -a $LOG_SUMMARY
+	$LDAP_BIN ${AUTH_OPTIONS} "$1" >> $OUTFILE 2>&1
+	return $?
+}
+
+ldap_check() {
+	$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*" >/dev/null 2>&1
+	if [ $? -eq 0 ]; then
+		echo "LDAPS Connection: Success" | tee -a $LOG_SUMMARY
+		echo | tee -a $LOG_SUMMARY
+		return 0
+	else
+		echo "LDAPS Connection: FAILED" | tee -a $LOG_SUMMARY
+		echo | tee -a $LOG_SUMMARY
+		echo "Preferred Server: $PREF_SERVER" | tee -a $LOG_SUMMARY
+		echo "DN: $NCSVR_ADMIN" | tee -a $LOG_SUMMARY
+		$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*"
+		echo
+		exit 1
+	fi
+}
+
+show_links() {
+	echo
+	echo 'eDirectory object associations should be:'
+	echo 
+	echo '                             +-----------------------------+'
+	echo '        +--------------------|--------------+              |'
+	echo '        |                    V              V              |'
+	echo ' nCSVolumeResource <-> nCSNCPServer <-> nCSVolumes --> nssfsPool   nCSNetWareCluster'
+	echo '                             |                                            ^'
+	echo '                             +--------------------------------------------+'
+	echo
+}
+
+show_summary() {
+	echo "================================" | tee -a $LOG_SUMMARY
+	echo | tee -a $LOG_SUMMARY
+	if [ -d $LOGROOT ]; then
+		CHAIN_FILES=$(find $LOGROOT -type f | grep analysis_detail | sort)
+		for VRCHAIN in ${CHAIN_FILES}
+		do
+			cat $VRCHAIN | sed -e '/^[[:space:]]*#/d' | tee -a $LOG_SUMMARY
+			echo | tee -a $LOG_SUMMARY
+		done
+
+		echo | tee -a $LOG_SUMMARY
+		for TYPE in cl vr ns pl vl
+		do
+			COUNT=$(cd $LOGROOT; ls -A1 $TYPE* 2>/dev/null | wc -l)
+			case $TYPE in
+			cl) echo "NCS Cluster Count:          $COUNT" | tee -a $LOG_SUMMARY ;;
+			vr) echo "Volume Resource Count:      $COUNT" | tee -a $LOG_SUMMARY ;;
+			ns) echo "NCS Server Count:           $COUNT" | tee -a $LOG_SUMMARY ;;
+			pl) echo "NCS Pool Count:             $COUNT" | tee -a $LOG_SUMMARY ;;
+			vl) echo "NCS Volume Count:           $COUNT" | tee -a $LOG_SUMMARY ;;
+			esac
+		done
+	fi
+	echo "--------------------------------" | tee -a $LOG_SUMMARY
+	echo "TOTAL Error Count:          $TOTAL_ERRORS" | tee -a $LOG_SUMMARY
+	echo | tee -a $LOG_SUMMARY
+}
+
+add_chain() {
+	FILE=$1
+	LEVEL=$2
+	OBJ=$3
+	OBJ_TYPE=$4
+	INDENT=""
+	
+	for (( i=0; i<$LEVEL; i++ ))
+	do
+		INDENT="${INDENT}  "
+	done
+
+	echo "${INDENT}${OBJ} (Object Type = $OBJ_TYPE)" >> $LOGROOT/$FILE
+	return 0
+}
+
+check_attributes() {
+	# Must call add_chain first to set INDENT
+	OBJ_TYPE=$1
+	OBJ_NAME=$2
+	SRC=$LOGROOT/$3
+	TRG=$4
+
+	case $OBJ_TYPE in
+	VolumeResource) ATTRIB_LIST="nCSVolumes nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum" ;;
+	Server) ATTRIB_LIST="nCSVolumes nCSNetWareCluster Resource networkAddress" ;;
+	Pool) ATTRIB_LIST="nssfsShared nssfsPoolID hostServer hostResourceName" ;;
+	Volume) ATTRIB_LIST="linuxNCPMountPoint nssfsPool DFS-Volume-Guid hostServer hostResourceName" ;;
+	Cluster)  ATTRIB_LIST="nCSSharedDiskFlag nCSEmailFilter nCSEmailAddresses nCSPortNumber nCSNetworkAddress nCSRevision nCSCRMResourcePriority nCSCRMQuorumTimeout nCSCRMQuorum nCSGIPCMaxRetransmits nCSGIPCSlaveWatchdog nCSGIPCMasterWatchdog nCSGIPCTolerance nCSGIPCHeartbeat networkAddress" ;;
+	*) ATTRIB_LIST="" ;;
+	esac
+
+	MISSING_COUNT=0
+	FOUND_COUNT=0
+	ATTRIB_TOTAL=$(echo $ATTRIB_LIST | wc -w)
+	for ATTRIBUTE in $ATTRIB_LIST
+	do
+		FOUND=$(grep -i ^${ATTRIBUTE}: $SRC)
+		if [ -n "$FOUND" ]; then
+			log_write $TRG "#${OBJ_NAME} (Found Attribute: ${ATTRIBUTE})"
+			((FOUND_COUNT++))
+		else
+			log_error $TRG "${OBJ_NAME} (MISSING Attribute: ${ATTRIBUTE})"
+			((MISSING_COUNT++))
+		fi
+	done
+	if [ $MISSING_COUNT -gt 0 ]; then
+		log_write $TRG "${OBJ_NAME} (ERROR: Missing $MISSING_COUNT of $ATTRIB_TOTAL attributes)"
+	else
+		log_write $TRG "${OBJ_NAME} (Found: $FOUND_COUNT of $ATTRIB_TOTAL attributes)"
+	fi
+
+	return 0
+}
+
+check_shareable_pool() {
+	# Must call add_chain first to set INDENT
+	OBJ_NAME=$1
+	SRC=$LOGROOT/$2
+	TRG=$3
+
+	POOL_SHAREABLE=$(grep -i ^nssfsShared: $SRC | uniq | awk '{print $2}')
+	if [ "$POOL_SHAREABLE" != "TRUE" ]; then
+		log_error $TRG "${OBJ_NAME} (ERROR: Pool object is NOT marked 'Shareable for Clustering')"
+	else
+		log_write $TRG "#${OBJ_NAME} (nssfsShared = TRUE)"
+	fi
+}
+
+log_write() {
+	LOGFILE="$LOGROOT/$1"
+	echo "${INDENT}$2" >> $LOGFILE
+}
+
+log_error() {
+	LOGFILE="$LOGROOT/$1"
+	echo "${INDENT}$2" >> $LOGFILE
+	((TOTAL_ERRORS++))
+	((CHAIN_STATUS++))
+}
+
+##############################################################################
+# main
+##############################################################################
+
+mkdir -p $LOGROOT
+chmod 700 $LOGROOT
+title
+get_credentials
+ldap_check
+
+ldap_cmd $LOG_VOL_RES "(objectclass=nCSVolumeResource)"
+echo | tee -a $LOG_SUMMARY
+
+OBJ_VOL_RESOURCES=$(grep -i ^cn: $LOGROOT/$LOG_VOL_RES | awk '{print $2}')
+# echo; echo "OBJ_VOL_RESOURCES = $OBJ_VOL_RESOURCES"; echo
+if [ -z "$OBJ_VOL_RESOURCES" ]; then
+	echo "ERROR: No nCSVolumeResource objects found"; echo
+	((TOTAL_ERRORS++))
+	show_summary
+	exit 1
+fi
+for OBJ_VOL_RES in ${OBJ_VOL_RESOURCES}
+do
+	VRLOG="vr$((++VRSEQ))_${OBJ_VOL_RES}.txt"
+	VRCHAIN="analysis_detail${VRSEQ}_${OBJ_VOL_RES}.txt"
+	CHAIN_STATUS=0
+	ldap_cmd $VRLOG "(cn=$OBJ_VOL_RES)"
+	add_chain $VRCHAIN 0 $OBJ_VOL_RES VolumeResource
+	check_attributes VolumeResource $OBJ_VOL_RES $VRLOG $VRCHAIN
+	LN_VR=$OBJ_VOL_RES
+	LN_VR_NS=$(grep -i ^nCSNCPServer: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
+
+	OBJ_CSNCP_SERVERS=$(grep -i ^nCSNCPServer: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
+	# echo; echo "OBJ_CSNCP_SERVERS = $OBJ_CSNCP_SERVERS"; echo
+	NSSEQ=0
+	if [ -z "$OBJ_CSNCP_SERVERS" ]; then
+		log_error $VRCHAIN "ERROR: No nCSNCPServer objects found"
+	else
+		for OBJ_CSNCP_SERVER in ${OBJ_CSNCP_SERVERS}
+		do
+			NSLOG="ns$((++NSSEQ))_${OBJ_CSNCP_SERVER}.txt"
+			ldap_cmd $NSLOG "(cn=$OBJ_CSNCP_SERVER)"
+			add_chain $VRCHAIN 1 $OBJ_CSNCP_SERVER Server
+			check_attributes Server $OBJ_CSNCP_SERVER $NSLOG $VRCHAIN
+			LN_NS=$OBJ_CSNCP_SERVER
+			LN_NS_VR=$(grep -i ^Resource: $LOGROOT/$NSLOG | cut -d= -f2 | cut -d, -f1)
+			if [ "$LN_VR" = "$LN_NS_VR" -a "$LN_NS" = "$LN_VR_NS" ]; then
+				log_write $VRCHAIN 'LINK: nCSVolumeResource <-> nCSNCPServer: OK'
+				log_write $VRCHAIN "   #[ $LN_VR = $LN_NS_VR -a $LN_NS = $LN_VR_NS ]"
+			else
+				log_error $VRCHAIN 'LINK: nCSVolumeResource <-> nCSNCPServer: ERROR: Link mismatch'
+				log_write $VRCHAIN "    [ $LN_VR = $LN_NS_VR -a $LN_NS = $LN_VR_NS ]"
+			fi
+
+			OBJ_CS_CLUSTERS=$(grep -i ^nCSNetWareCluster: $LOGROOT/$NSLOG | cut -d= -f2 | cut -d, -f1)
+			# echo; echo "OBJ_CS_CLUSTERS = $OBJ_CS_CLUSTERS"; echo
+			CLSEQ=0
+			if [ -z "$OBJ_CS_CLUSTERS" ]; then
+				log_error $VRCHAIN "ERROR: No nCSNetWareCluster objects found"
+			else
+				for OBJ_CS_CLUSTER in ${OBJ_CS_CLUSTERS}
+				do
+					CLOG="cl$((++CLSEQ))_${OBJ_CS_CLUSTER}.txt"
+					ldap_cmd $CLOG "(cn=$OBJ_CS_CLUSTER)"
+					add_chain $VRCHAIN 2 $OBJ_CS_CLUSTER Cluster
+					check_attributes Cluster $OBJ_CS_CLUSTER $CLOG $VRCHAIN
+					LN_NS_CL=$OBJ_CS_CLUSTER
+					LN_CL=$(grep -i ^dn: $LOGROOT/$CLOG | uniq | cut -d= -f2 | cut -d, -f1)
+					if [ "$LN_CL" = "$LN_NS_CL" ]; then
+						log_write $VRCHAIN 'LINK: nCSNCPServer --> nCSNetWareCluster: OK'
+						log_write $VRCHAIN "   #[ $LN_CL = $LN_NS_CL ]"
+					else
+						log_error $VRCHAIN 'LINK: nCSNCPServer --> nCSNetwareCluster: ERROR: Link mismatch'
+						log_write $VRCHAIN "    [ $LN_CL = $LN_NS_CL ]"
+					fi
+				done
+			fi
+		done
+	fi
+
+	OBJ_CS_VOLS=$(grep -i ^nCSVolumes: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
+	# echo; echo "OBJ_CS_VOLS = $OBJ_CS_VOLS"; echo
+	VOLSEQ=0
+	if [ -z "$OBJ_CS_VOLS" ]; then
+		log_error $VRCHAIN "ERROR: No ncs Volume objects found"
+	else
+		for OBJ_CS_VOL in ${OBJ_CS_VOLS}
+		do
+			VOLOG="vl$((++VOLSEQ))_${OBJ_CS_VOL}.txt"
+			ldap_cmd $VOLOG "(cn=$OBJ_CS_VOL)"
+			add_chain $VRCHAIN 1 $OBJ_CS_VOL Volume
+			check_attributes Volume $OBJ_CS_VOL $VOLOG $VRCHAIN
+			LN_VR_VL=$OBJ_CS_VOL
+			LN_VL_NS=$(grep -i ^hostServer: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
+			LN_VL_PL=$(grep -i ^nssfsPool: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
+			LN_NS_VL=$(grep -i ^nCSVolumes: $LOGROOT/$NSLOG | grep ${OBJ_CS_VOL} | cut -d= -f2 | cut -d, -f1)
+			LN_VL=$(grep -i ^dn: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
+			if [ "$LN_VL" = "$LN_NS_VL" -a "$LN_NS" = "$LN_VL_NS" ]; then
+				log_write $VRCHAIN 'LINK: nCSVolumes <-> nCSNCPServer: OK'
+				log_write $VRCHAIN "   #[ $LN_VL = $LN_NS_VL -a $LN_NS = $LN_VL_NS ]"
+			else
+				log_error $VRCHAIN 'LINK: nCSVolumes <-> nCSNCPServer: ERROR: Link mismatch'
+				log_write $VRCHAIN "    [ $LN_VL = $LN_NS_VL -a $LN_NS = $LN_VL_NS ]"
+			fi
+			if [ "$LN_VL" = "$LN_VR_VL" ]; then
+				log_write $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: OK'
+				log_write $VRCHAIN "   #[ $LN_VL = $LN_VR_VL ]"
+			else
+				log_error $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: ERROR: Link mismatch'
+				log_write $VRCHAIN "    [ $LN_VL = $LN_VR_VL ]"
+			fi
+
+			OBJ_CS_POOLS=$(grep -i ^nssfsPool: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
+			# echo; echo "OBJ_CS_POOLS = $OBJ_CS_POOLS"; echo
+			POOLSEQ=0
+			if [ -z "$OBJ_CS_POOLS" ]; then
+				log_error $VRCHAIN "ERROR: No ncs nssfsPool objects found"
+			else
+				for OBJ_CS_POOL in ${OBJ_CS_POOLS}
+				do
+					POOLOG="pl$((++POOLSEQ))_${OBJ_CS_POOL}.txt"
+					ldap_cmd $POOLOG "(cn=$OBJ_CS_POOL)"
+					add_chain $VRCHAIN 2 $OBJ_CS_POOL Pool
+					check_attributes Pool $OBJ_CS_POOL $POOLOG $VRCHAIN
+					check_shareable_pool $OBJ_CS_POOL $POOLOG $VRCHAIN
+					LN_PL_NS=$(grep -i ^hostServer: $LOGROOT/$POOLOG | uniq | cut -d= -f2 | cut -d, -f1)
+					LN_PL=$(grep -i ^nssfsPool: $LOGROOT/$POOLOG | cut -d= -f2 | cut -d, -f1)
+					if [ "$LN_NS" = "$LN_PL_NS" ]; then
+						log_write $VRCHAIN 'LINK: nssfsPool --> nCSNCPServer: OK'
+						log_write $VRCHAIN "   #[ $LN_NS = $LN_PL_NS ]"
+					else
+						log_error $VRCHAIN 'LINK: nssfsPool --> nCSNCPServer: ERROR: Link mismatch'
+						log_write $VRCHAIN "    [ $LN_NS = $LN_PL_NS ]"
+					fi
+
+				done
+			fi
+		done
+	fi
+	echo >> $LOGROOT/$VRCHAIN
+	if [ $CHAIN_STATUS -gt 0 ]; then
+		show_links >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES Volume Resource Status: Errors Found" >> $LOGROOT/$VRCHAIN
+	else
+		echo "$OBJ_VOL_RES Volume Resource Status: Passed" >> $LOGROOT/$VRCHAIN
+	fi
+	printf "\n---------------------\n" >> $LOGROOT/$VRCHAIN
+	echo | tee -a $LOG_SUMMARY
+done
+
+show_summary
+
+exit 0
+

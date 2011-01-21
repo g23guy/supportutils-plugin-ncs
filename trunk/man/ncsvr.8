@@ -1,0 +1,28 @@
+.TH ncsvr "8" "21 Jan 2011" "ncsvr" "Support Utilities Manual"
+.SH NAME
+ncsvr \- Novell Cluster Service Volume Resource Plugin for 
+.BR supportconfig (8)
+.
+.SH DESCRIPTION
+Supportconfig plugins add functionality to the supportconfig script. This plugin extends supportconfig's functionality to include an analysis of 
+volume resource objects and attributes in a Novell Cluster Services cluster. This is supplimental to the novell-ncs.txt that supportconfig already 
+gets. Supportconfig saves the plugin output as plugin-ncsvr.txt.
+
+The plugin uses the CASA credentials to analyze the eDirectory volume resource objects. If you are not using CASA, you can define the 
+credentials using two evironment variables, NCSVR_ADMIN and NCSVR_PASS, to temporarily set eDirectory admin credentials. For example, 
+
+# NCSVR_ADMIN="cn=admin,o=novell" NCSVR_PASS="novell" supportconfig
+
+.SH FILES
+.I /opt/supportconfig/plugins/ncsvr
+.RS
+The Novell Cluster Services Volume Resource plugin
+.RE
+.SH AUTHOR
+Jason Record <jrecord@novell.com>
+.SH REPORTING BUGS
+Please submit bug fixes, comments or enhancement requests via: 
+.B http://code.google.com/p/supportutils-plugin-ncs/issues/list
+.SH SEE ALSO
+.BR supportconfig (8)
+.BR supportconfig.conf (5)

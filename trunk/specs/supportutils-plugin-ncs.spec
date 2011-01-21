@@ -15,7 +15,7 @@ License:      GPLv2
 Group:        Documentation/SuSE
 Autoreqprov:  on
 Version:      1.0
-Release:      0.20110120.DEV.4
+Release:      0.20110120.DEV.5
 Source:       %{name}-%{version}.tar.gz
 Summary:      Supportconfig Plugin for Novell Cluster Service Volume Resources
 BuildRoot:    %{_tmppath}/%{name}-%{version}-build
@@ -44,7 +44,7 @@ pwd;ls -la
 rm -rf $RPM_BUILD_ROOT
 install -d $RPM_BUILD_ROOT/usr/lib/supportconfig/plugins
 install -d $RPM_BUILD_ROOT/usr/share/man/man8
-install -m 0500 ncsvr $RPM_BUILD_ROOT/usr/lib/supportconfig/plugins
+install -m 0544 ncsvr $RPM_BUILD_ROOT/usr/lib/supportconfig/plugins
 install -m 0644 ncsvr.8.gz $RPM_BUILD_ROOT/usr/share/man/man8/ncsvr.8.gz
 
 %files

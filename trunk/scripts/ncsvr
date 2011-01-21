@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.92
+VER=1.95.1
 MODATE="2011 Jan 21"
 
 ##############################################################################
@@ -256,20 +256,6 @@ check_attributes() {
 	return 0
 }
 
-check_shareable_pool() {
-	# Must call add_chain first to set INDENT
-	OBJ_NAME=$1
-	SRC=$LOGROOT/$2
-	TRG=$3
-
-	POOL_SHAREABLE=$(grep -i ^nssfsShared: $SRC | uniq | awk '{print $2}')
-	if [ "$POOL_SHAREABLE" != "TRUE" ]; then
-		log_error $TRG "${OBJ_NAME} (ERROR: Pool object is NOT marked 'Shareable for Clustering')"
-	else
-		log_write $TRG "#${OBJ_NAME} (nssfsShared = TRUE)"
-	fi
-}
-
 log_write() {
 	LOGFILE="$LOGROOT/$1"
 	echo "${INDENT}$2" >> $LOGFILE
@@ -406,7 +392,6 @@ do
 					ldap_cmd $POOLOG "(cn=$OBJ_CS_POOL)"
 					add_chain $VRCHAIN 2 $OBJ_CS_POOL Pool
 					check_attributes Pool $OBJ_CS_POOL $POOLOG $VRCHAIN
-					check_shareable_pool $OBJ_CS_POOL $POOLOG $VRCHAIN
 					LN_PL_NS=$(grep -i ^hostServer: $LOGROOT/$POOLOG | uniq | cut -d= -f2 | cut -d, -f1)
 					LN_PL=$(grep -i ^nssfsPool: $LOGROOT/$POOLOG | cut -d= -f2 | cut -d, -f1)
 					if [ "$LN_NS" = "$LN_PL_NS" ]; then
@@ -425,6 +410,7 @@ do
 	if [ $CHAIN_STATUS -gt 0 ]; then
 		show_links >> $LOGROOT/$VRCHAIN
 		echo "$OBJ_VOL_RES Volume Resource Status: Errors Found" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES Missing Attributes: $MISSING_COUNT" >> $LOGROOT/$VRCHAIN
 	else
 		echo "$OBJ_VOL_RES Volume Resource Status: Passed" >> $LOGROOT/$VRCHAIN
 	fi

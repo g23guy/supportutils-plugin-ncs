@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.2
+VER=1.95.5
 MODATE="2011 Jan 21"
 
 ##############################################################################
@@ -54,9 +54,6 @@ LOG_VOL_RES="volume_resources.txt"
 LOG_SUMMARY="${LOGROOT}/Analysis.txt"
 VRSEQ=0
 TOTAL_ERRORS=0
-ERR_ATTR=0
-ERR_LINK=0
-ERR_OBJ=0
 PATH=/bin:/sbin:$PATH
 export PATH
 
@@ -289,13 +286,15 @@ OBJ_VOL_RESOURCES=$(grep -i ^cn: $LOGROOT/$LOG_VOL_RES | awk '{print $2}')
 # echo; echo "OBJ_VOL_RESOURCES = $OBJ_VOL_RESOURCES"; echo
 if [ -z "$OBJ_VOL_RESOURCES" ]; then
 	echo "ERROR: No nCSVolumeResource objects found"; echo
-	((ERR_OBJ++))
 	((TOTAL_ERRORS++))
 	show_summary
 	exit 1
 fi
 for OBJ_VOL_RES in ${OBJ_VOL_RESOURCES}
 do
+	ERR_ATTR=0
+	ERR_LINK=0
+	ERR_OBJ=0
 	VRLOG="vr$((++VRSEQ))_${OBJ_VOL_RES}.txt"
 	VRCHAIN="analysis_detail${VRSEQ}_${OBJ_VOL_RES}.txt"
 	CHAIN_STATUS=0

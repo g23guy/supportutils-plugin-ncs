@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.5
+VER=1.95.6
 MODATE="2011 Jan 21"
 
 ##############################################################################
@@ -54,6 +54,9 @@ LOG_VOL_RES="volume_resources.txt"
 LOG_SUMMARY="${LOGROOT}/Analysis.txt"
 VRSEQ=0
 TOTAL_ERRORS=0
+TOTAL_OBJ=0
+TOTAL_ATTR=0
+TOTAL_LINK=0
 PATH=/bin:/sbin:$PATH
 export PATH
 
@@ -198,6 +201,9 @@ show_summary() {
 	fi
 	echo "--------------------------------" | tee -a $LOG_SUMMARY
 	echo "TOTAL Error Count:          $TOTAL_ERRORS" | tee -a $LOG_SUMMARY
+	echo "TOTAL Object Errors:        $TOTAL_OBJ" | tee -a $LOG_SUMMARY
+	echo "TOTAL Attribute Errors:     $TOTAL_ATTR" | tee -a $LOG_SUMMARY
+	echo "TOTAL Link Errors:          $TOTAL_LINK" | tee -a $LOG_SUMMARY
 	echo | tee -a $LOG_SUMMARY
 }
 
@@ -432,6 +438,9 @@ do
 	fi
 	printf "\n---------------------\n" >> $LOGROOT/$VRCHAIN
 	echo | tee -a $LOG_SUMMARY
+	TOTAL_OBJ=$((TOTAL_OBJ+ERR_OBJ))
+	TOTAL_ATTR=$((TOTAL_OBJ+ERR_ATTR))
+	TOTAL_LINK=$((TOTAL_OBJ+ERR_LINK))
 done
 
 show_summary

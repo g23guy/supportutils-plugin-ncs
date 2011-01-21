@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.1
+VER=1.95.2
 MODATE="2011 Jan 21"
 
 ##############################################################################
@@ -54,6 +54,9 @@ LOG_VOL_RES="volume_resources.txt"
 LOG_SUMMARY="${LOGROOT}/Analysis.txt"
 VRSEQ=0
 TOTAL_ERRORS=0
+ERR_ATTR=0
+ERR_LINK=0
+ERR_OBJ=0
 PATH=/bin:/sbin:$PATH
 export PATH
 
@@ -253,6 +256,7 @@ check_attributes() {
 		log_write $TRG "${OBJ_NAME} (Found: $FOUND_COUNT of $ATTRIB_TOTAL attributes)"
 	fi
 
+	ERR_ATTR=$((ERR_ATTR + MISSING_COUNT))
 	return 0
 }
 
@@ -285,6 +289,7 @@ OBJ_VOL_RESOURCES=$(grep -i ^cn: $LOGROOT/$LOG_VOL_RES | awk '{print $2}')
 # echo; echo "OBJ_VOL_RESOURCES = $OBJ_VOL_RESOURCES"; echo
 if [ -z "$OBJ_VOL_RESOURCES" ]; then
 	echo "ERROR: No nCSVolumeResource objects found"; echo
+	((ERR_OBJ++))
 	((TOTAL_ERRORS++))
 	show_summary
 	exit 1
@@ -305,6 +310,7 @@ do
 	NSSEQ=0
 	if [ -z "$OBJ_CSNCP_SERVERS" ]; then
 		log_error $VRCHAIN "ERROR: No nCSNCPServer objects found"
+		((ERR_OBJ++))
 	else
 		for OBJ_CSNCP_SERVER in ${OBJ_CSNCP_SERVERS}
 		do
@@ -320,6 +326,7 @@ do
 			else
 				log_error $VRCHAIN 'LINK: nCSVolumeResource <-> nCSNCPServer: ERROR: Link mismatch'
 				log_write $VRCHAIN "    [ $LN_VR = $LN_NS_VR -a $LN_NS = $LN_VR_NS ]"
+				((ERR_LINK++))
 			fi
 
 			OBJ_CS_CLUSTERS=$(grep -i ^nCSNetWareCluster: $LOGROOT/$NSLOG | cut -d= -f2 | cut -d, -f1)
@@ -327,6 +334,7 @@ do
 			CLSEQ=0
 			if [ -z "$OBJ_CS_CLUSTERS" ]; then
 				log_error $VRCHAIN "ERROR: No nCSNetWareCluster objects found"
+				((ERR_OBJ++))
 			else
 				for OBJ_CS_CLUSTER in ${OBJ_CS_CLUSTERS}
 				do
@@ -342,6 +350,7 @@ do
 					else
 						log_error $VRCHAIN 'LINK: nCSNCPServer --> nCSNetwareCluster: ERROR: Link mismatch'
 						log_write $VRCHAIN "    [ $LN_CL = $LN_NS_CL ]"
+						((ERR_LINK++))
 					fi
 				done
 			fi
@@ -353,6 +362,7 @@ do
 	VOLSEQ=0
 	if [ -z "$OBJ_CS_VOLS" ]; then
 		log_error $VRCHAIN "ERROR: No ncs Volume objects found"
+		((ERR_OBJ++))
 	else
 		for OBJ_CS_VOL in ${OBJ_CS_VOLS}
 		do
@@ -371,6 +381,7 @@ do
 			else
 				log_error $VRCHAIN 'LINK: nCSVolumes <-> nCSNCPServer: ERROR: Link mismatch'
 				log_write $VRCHAIN "    [ $LN_VL = $LN_NS_VL -a $LN_NS = $LN_VL_NS ]"
+				((ERR_LINK++))
 			fi
 			if [ "$LN_VL" = "$LN_VR_VL" ]; then
 				log_write $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: OK'
@@ -378,6 +389,7 @@ do
 			else
 				log_error $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: ERROR: Link mismatch'
 				log_write $VRCHAIN "    [ $LN_VL = $LN_VR_VL ]"
+				((ERR_LINK++))
 			fi
 
 			OBJ_CS_POOLS=$(grep -i ^nssfsPool: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
@@ -385,6 +397,7 @@ do
 			POOLSEQ=0
 			if [ -z "$OBJ_CS_POOLS" ]; then
 				log_error $VRCHAIN "ERROR: No ncs nssfsPool objects found"
+				((ERR_OBJ++))
 			else
 				for OBJ_CS_POOL in ${OBJ_CS_POOLS}
 				do
@@ -400,6 +413,7 @@ do
 					else
 						log_error $VRCHAIN 'LINK: nssfsPool --> nCSNCPServer: ERROR: Link mismatch'
 						log_write $VRCHAIN "    [ $LN_NS = $LN_PL_NS ]"
+						((ERR_LINK++))
 					fi
 
 				done
@@ -409,8 +423,11 @@ do
 	echo >> $LOGROOT/$VRCHAIN
 	if [ $CHAIN_STATUS -gt 0 ]; then
 		show_links >> $LOGROOT/$VRCHAIN
-		echo "$OBJ_VOL_RES Volume Resource Status: Errors Found" >> $LOGROOT/$VRCHAIN
-		echo "$OBJ_VOL_RES Missing Attributes: $MISSING_COUNT" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES Volume Resource Status:   Errors Found" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES  Missing Objects:         $ERR_OBJ" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES  Missing Attributes:      $ERR_ATTR" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES  Mismatched Object Links: $ERR_LINK" >> $LOGROOT/$VRCHAIN
+		echo "$OBJ_VOL_RES  TOTAL Errors:            $((ERR_OBJ+ERR_ATTR+ERR_LINK))" >> $LOGROOT/$VRCHAIN
 	else
 		echo "$OBJ_VOL_RES Volume Resource Status: Passed" >> $LOGROOT/$VRCHAIN
 	fi

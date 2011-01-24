@@ -1,6 +1,6 @@
 #!/bin/bash
-VER=1.95.11
-MODATE="2011 Jan 21"
+VER=1.95.13
+MODATE="2011 Jan 24"
 
 ##############################################################################
 #  ncsvr - Novell Cluster Service Volume Resource Plugin for Supportconfig
@@ -291,15 +291,9 @@ title
 get_credentials
 ldap_check
 
-if rpm -q novell-business-continuity-cluster &>/dev/null; then
-	log_summary "WARNING: Novell BCC Detected, Disabling Link Checks"
-	log_summary
-	CHECK_LINKS=0
-fi
-
 ldap_cmd $LOG_CLUSTER "(objectclass=nCSNetWareCluster)"
 CLUSTER_COUNT=$(grep -i ^cn: $LOGROOT/$LOG_CLUSTER | wc -l)
-if [ $CHECK_LINKS -gt 0 -a $CLUSTER_COUNT -gt 1 ]; then
+if [ $CLUSTER_COUNT -gt 1 ]; then
 	log_summary "WARNING: Multiple Clusters in the Tree, Disabling Link Checks"
 	log_summary
 	CHECK_LINKS=0

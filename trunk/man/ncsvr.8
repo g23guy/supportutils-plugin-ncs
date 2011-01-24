@@ -11,10 +11,10 @@ gets. Supportconfig saves the plugin output as plugin-ncsvr.txt.
 The plugin uses the CASA credentials to analyze the eDirectory volume resource objects. If you are not using CASA, you can define the 
 credentials using two environment variables, NCSVR_ADMIN and NCSVR_PASS, to temporarily set eDirectory admin credentials. For example, 
 
-# NCSVR_ADMIN="cn=admin,o=novell" NCSVR_PASS="novell" supportconfig
+NCSVR_ADMIN="cn=admin,o=novell" NCSVR_PASS="novell" supportconfig
 
 .SH FILES
-.I /opt/supportconfig/plugins/ncsvr
+.I /usr/lib/supportconfig/plugins/ncsvr
 .RS
 The Novell Cluster Services Volume Resource plugin
 .RE

@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.14
+VER=1.95.15
 MODATE="2011 Jan 24"
 
 ##############################################################################
@@ -193,7 +193,7 @@ show_summary() {
 		do
 			COUNT=$(cd $LOGROOT; ls -A1 $TYPE* 2>/dev/null | wc -l)
 			case $TYPE in
-			cl) log_summary "NCS Cluster Count:          $COUNT" ;;
+			cl) log_summary "NCS Cluster Count:          $CLUSTER_COUNT" ;;
 			vr) log_summary "Volume Resource Count:      $COUNT" ;;
 			ns) log_summary "NCS Server Count:           $COUNT" ;;
 			pl) log_summary "NCS Pool Count:             $COUNT" ;;
@@ -205,7 +205,11 @@ show_summary() {
 	log_summary "TOTAL Error Count:          $TOTAL_ERRORS"
 	log_summary "TOTAL Object Errors:        $TOTAL_OBJ"
 	log_summary "TOTAL Attribute Errors:     $TOTAL_ATTR"
-	log_summary "TOTAL Link Errors:          $TOTAL_LINK"
+	if (( $CHECK_LINKS )); then
+		log_summary "TOTAL Link Errors:          $TOTAL_LINK"
+	else
+		log_summary "TOTAL Link Errors:          Disabled"
+	fi
 	log_summary
 }
 

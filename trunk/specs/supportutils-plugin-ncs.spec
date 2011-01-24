@@ -1,5 +1,5 @@
 #
-# spec file for package supportutils-plugin-ncs (Version 0.0-0)
+# spec file for package supportutils-plugin-ncs (Version 1.0-1)
 #
 # Copyright (C) 2011 Novell, Inc.
 # This file and all modifications and additions to the pristine
@@ -15,7 +15,7 @@ License:      GPLv2
 Group:        Documentation/SuSE
 Autoreqprov:  on
 Version:      1.0
-Release:      0.20110124.DEV.4
+Release:      1
 Source:       %{name}-%{version}.tar.gz
 Summary:      Supportconfig Plugin for Novell Cluster Service Volume Resources
 BuildRoot:    %{_tmppath}/%{name}-%{version}-build
@@ -23,6 +23,7 @@ BuildArch:    noarch
 Distribution: Novell NTS
 Vendor:       Novell Technical Services
 Requires:     novell-cluster-services
+Requires:     supportutils
 
 %description
 Validates NCS volume resource objects and attributes.

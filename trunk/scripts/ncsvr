@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=1.95.20
+VER=2.0.0
 MODATE="2011 Jan 24"
 
 ##############################################################################
@@ -32,6 +32,10 @@ MODATE="2011 Jan 24"
 #     Jason Record (jrecord@novell.com)
 #
 ##############################################################################
+
+# Known Issues
+# 1. Generates duplicate records with BCC
+# 2. Does not support multiple clusters in a tree
 
 
 # global variables

@@ -1,4 +1,12 @@
 -------------------------------------------------------------------
+Fri Feb 04 10:59:57 MST 2011 - jrecord@novell.com
+
+-rewritten to support multiple clusters
+-node cluster detection added
+-link support for multiple clusters in tree supported
+-moved supporting files to ldap-ncsvr-files
+
+-------------------------------------------------------------------
 Mon Jan 24 13:13:25 MST 2011 - jrecord@novell.com
 
 -initial build

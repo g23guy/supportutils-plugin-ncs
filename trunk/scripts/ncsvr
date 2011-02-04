@@ -1,6 +1,10 @@
 #!/bin/bash
-VER=2.0.0
-MODATE="2011 Jan 24"
+VER=2.0.0-110204.DEV.12
+MODATE="2011 Feb 04"
+
+# todo
+# 1. put cluster ldap query in it's own file.
+# 2. read cn location from file's dn:
 
 ##############################################################################
 #  ncsvr - Novell Cluster Service Volume Resource Plugin for Supportconfig
@@ -53,50 +57,55 @@ DATESTAMP=$(date +%y%m%d)
 TIMESTAMP=$(date +%H%M%S)
 HOSTNAME=$(hostname)
 test -z "$HOSTNAME" && HOSTNAME=unknown
-LOGROOT="${LOG:="/var/log/nts_ncsvr_${HOSTNAME}_${DATESTAMP}_${TIMESTAMP}"}/plugin-ncsvr"
-LOG_CLUSTER="cluster_objects.txt"
-LOG_VOL_RES="volume_resources.txt"
+# LOG is set by supportconfig
+LOGROOT="${LOG:="/var/log/nts_ncsvr_${HOSTNAME}_${DATESTAMP}_${TIMESTAMP}"}/ldap-ncsvr-files"
+FILE_CLUSTERS="${LOGROOT}/clusters.txt"
 LOG_SUMMARY="${LOGROOT}/Analysis.txt"
 VRSEQ=0
 TOTAL_ERRORS=0
 TOTAL_OBJ=0
 TOTAL_ATTR=0
 TOTAL_LINK=0
-CHECK_LINKS=1
+TOTAL_VOLRES=0
 PATH=/bin:/sbin:$PATH
 export PATH
+FMT_INTRO="%-25s %s\n"
+FMT_OBJ="%-35s %s\n"
+FMT_SHORT="%-9s %s\n"
+FMT_CURRENT=$FMT_INTRO
 
 # function definitions
 ##############################################################################
 
 title() {
-	log_summary "---------------------------------------------------------"
-	log_summary " Novell Open Enterprise Server"
-	log_summary " NCS Volume Resource Plugin for Supportconfig"
-	log_summary " Version: $VER ($MODATE)"
-	log_summary " Date:    $(date +"%D %T")"
-	log_summary "---------------------------------------------------------"
+	log_detail "---------------------------------------------------------"
+	log_detail " Novell Open Enterprise Server"
+	log_detail " NCS Volume Resource Plugin for Supportconfig"
+	log_detail " Version: $VER ($MODATE)"
+	log_detail " Date:    $(date +"%D %T")"
+	log_detail "---------------------------------------------------------"
 }
 
 get_credentials() {
 	KEYFOUND=1
-	DERFILE=".$(namconfig get preferred-server | cut -d= -f2).der"
+	DERFILE=".$(namconfig get preferred-server 2>/dev/null | cut -d= -f2).der"
 	CERT_DIRECTORIES="/var/lib/novell-lum /var/nam"
 	for CERT_DIR in $CERT_DIRECTORIES
 	do
 		AUTHKEY="${CERT_DIR}/${DERFILE}"
 		if [ -s $AUTHKEY ]; then
-			log_summary "Using $AUTHKEY"
+			log_summary "Using:" "$AUTHKEY"
 			KEYFOUND=1
 			break
 		else
-			log_summary "File not found: $AUTHKEY"
+			log_summary "File not found:" "$AUTHKEY"
 			KEYFOUND=0
 		fi
 	done
 
 	if [ $KEYFOUND = 0 ]; then
-		echo "ERROR: Missing *.der file for TLS authentication in $CERT_DIRECTORIES"; echo
+		log_detail "ERROR: Missing *.der file for TLS authentication in $CERT_DIRECTORIES"
+		log_detail
 		((TOTAL_ERRORS++))
 		show_summary
 		exit 1
@@ -111,30 +120,29 @@ get_credentials() {
 	
 	if [ -z "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
 		if [ -x /opt/novell/ncs/bin/ncs-casautil ]; then
-			log_summary "Using CASA Credentials"
+			log_summary "Credentials:" "CASA"
 			NCSVR_ADMIN=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | head -1)
 			NCSVR_PASS=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | tail -1)
 		else
-			log_summary "ERROR: Unable to access cluster credentials"
-			log_summary "       Consider setting NCSVR_ADMIN and NCSVR_PASS in the environment first."
-			log_summary "       For example, run:"
-			log_summary "       NCSVR_ADMIN=\"cn=admin,o=novell\" NCSVR_PASS=\"novell\" supportconfig"
-			log_summary
+			log_detail "ERROR: Unable to access cluster credentials"
+			log_detail "       Consider setting NCSVR_ADMIN and NCSVR_PASS in the environment first."
+			log_detail "       For example, run:"
+			log_detail "       NCSVR_ADMIN=\"cn=admin,o=novell\" NCSVR_PASS=\"Novell\" supportconfig"
+			log_detail
 			exit 2
 		fi
 	else
-		log_summary "Using Environment Credentials: NCSVR_ADMIN and NCSVR_PASS"
+		log_summary "Credentials:" "Environment, NCSVR_ADMIN and NCSVR_PASS"
 	fi
-	log_summary
 	if [ -z "$NCSVR_ADMIN" -a -n "$NCSVR_PASS" ]; then
-		log_summary "ERROR: NCSVR_ADMIN undefined"
-		log_summary "       Define both NCSVR_ADMIN and NCSVR_PASS"
-		log_summary
+		log_detail "ERROR: NCSVR_ADMIN undefined"
+		log_detail "       Define both NCSVR_ADMIN and NCSVR_PASS"
+		log_detail
 		exit 4
 	elif [ -n "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
-		log_summary "ERROR: NCSVR_PASS undefined"
-		log_summary "       Define both NCSVR_ADMIN and NCSVR_PASS"
-		log_summary
+		log_detail "ERROR: NCSVR_PASS undefined"
+		log_detail "       Define both NCSVR_ADMIN and NCSVR_PASS"
+		log_detail
 		exit 6
 	fi
 
@@ -142,103 +150,52 @@ get_credentials() {
 }
 
 ldap_cmd() {
-	OUTFILE="${LOGROOT}/$1"
-	shift
+	OUTFILE="$1"
+	BASEDN="$2"
+	SEARCH="$3"
+	COMMENT="$4"
+#	debug OUTFILE BASEDN SEARCH
 	echo "#------------------------------------------------#" >> $OUTFILE
-	echo "# $LDAP_BIN ${AUTH_OPTIONS} \"$1\"" | sed -e "s/-w $NCSVR_PASS/-w \*\*\*\*/" >> $OUTFILE
-	log_summary "Fetching $1"
-	$LDAP_BIN ${AUTH_OPTIONS} "$1" >> $OUTFILE 2>&1
+	echo "# $LDAP_BIN ${AUTH_OPTIONS} -b \"$BASEDN\" -s sub \"$SEARCH\"" | sed -e "s/-w $NCSVR_PASS/-W/" >> $OUTFILE
+	if [ -n "$COMMENT" ]; then
+		log_summary "Query $COMMENT" "$SEARCH"
+	else
+		log_summary "Query" "$SEARCH"
+	fi
+	$LDAP_BIN ${AUTH_OPTIONS} -b "$BASEDN" -s sub "$SEARCH" >> $OUTFILE 2>&1
 	return $?
 }
 
 ldap_check() {
 	$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*" >/dev/null 2>&1
 	if [ $? -eq 0 ]; then
-		log_summary "LDAPS Connection: Success"
-		log_summary
+		log_summary "LDAPS Connection:" "Success"
 		return 0
 	else
-		log_summary "LDAPS Connection: FAILED"
-		log_summary
-		log_summary "Preferred Server: $PREF_SERVER"
-		log_summary "DN: $NCSVR_ADMIN"
+		log_summary "LDAPS Connection:" "FAILED"
+		log_summary "Preferred Server:" "$PREF_SERVER"
+		log_summary "DN:" "$NCSVR_ADMIN"
 		$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*"
-		log_summary
+		log_detail
 		exit 1
 	fi
 }
 
-show_links() {
-	log_summary
-	log_summary 'eDirectory object associations should be:'
-	log_summary 
-	log_summary '                             +-----------------------------+'
-	log_summary '        +--------------------|--------------+              |'
-	log_summary '        |                    V              V              |'
-	log_summary ' nCSVolumeResource <-> nCSNCPServer <-> nCSVolumes --> nssfsPool   nCSNetWareCluster'
-	log_summary '                             |                                            ^'
-	log_summary '                             +--------------------------------------------+'
-	log_summary
-}
-
 show_summary() {
-	log_summary "================================"
-	log_summary
-	if [ -d $LOGROOT ]; then
-		CHAIN_FILES=$(find $LOGROOT -type f | grep analysis_detail | sort)
-		for VRCHAIN in ${CHAIN_FILES}
-		do
-			cat $VRCHAIN | sed -e '/^[[:space:]]*#/d'
-			log_summary
-		done
-
-		log_summary
-		for TYPE in cl vr ns pl vl
-		do
-			COUNT=$(cd $LOGROOT; ls -A1 $TYPE* 2>/dev/null | wc -l)
-			case $TYPE in
-			cl) log_summary "NCS Cluster Count:          $CLUSTER_COUNT" ;;
-			vr) log_summary "Volume Resource Count:      $COUNT" ;;
-			ns) log_summary "NCS Server Count:           $COUNT" ;;
-			pl) log_summary "NCS Pool Count:             $COUNT" ;;
-			vl) log_summary "NCS Volume Count:           $COUNT" ;;
-			esac
-		done
-	fi
-	log_summary "--------------------------------"
-	log_summary "TOTAL Error Count:          $TOTAL_ERRORS"
-	log_summary "TOTAL Object Errors:        $TOTAL_OBJ"
-	log_summary "TOTAL Attribute Errors:     $TOTAL_ATTR"
-	if (( $CHECK_LINKS )); then
-		log_summary "TOTAL Link Errors:          $TOTAL_LINK"
-	else
-		log_summary "TOTAL Link Errors:          Disabled"
-	fi
-	log_summary
-}
-
-add_chain() {
-	FILE=$1
-	LEVEL=$2
-	OBJ=$3
-	OBJ_TYPE=$4
-	INDENT=""
-	
-	for (( i=0; i<$LEVEL; i++ ))
-	do
-		INDENT="${INDENT}  "
-	done
-
-	echo "${INDENT}${OBJ} (Object Type = $OBJ_TYPE)" >> $LOGROOT/$FILE
-	return 0
+	log_detail
+	log_detail "===================================================="
+	log_summary "TOTAL Volume Resources Analyzed:" "$TOTAL_VOLRES"
+	log_summary "TOTAL Error Count:" "$TOTAL_ERRORS"
+	log_summary "TOTAL Object Errors:" "$TOTAL_OBJ"
+	log_summary "TOTAL Attribute Errors:" "$TOTAL_ATTR"
+	log_summary "TOTAL Link Errors:" "$TOTAL_LINK"
+	log_detail
 }
 
 check_attributes() {
-	# Must call add_chain first to set INDENT
 	OBJ_TYPE=$1
 	OBJ_NAME=$2
-	SRC=$LOGROOT/$3
-	TRG=$4
+	SRC=$3
 
 	case $OBJ_TYPE in
 	VolumeResource) ATTRIB_LIST="nCSVolumes nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum" ;;
@@ -256,38 +213,205 @@ check_attributes() {
 	do
 		FOUND=$(grep -i ^${ATTRIBUTE}: $SRC)
 		if [ -n "$FOUND" ]; then
-			log_write $TRG "#${OBJ_NAME} (Found Attribute: ${ATTRIBUTE})"
 			((FOUND_COUNT++))
 		else
-			log_error $TRG "${OBJ_NAME} (MISSING Attribute: ${ATTRIBUTE})"
+			log_summary " ${OBJ_NAME}" "Attribute: ${ATTRIBUTE}"
 			((MISSING_COUNT++))
 		fi
 	done
 	if [ $MISSING_COUNT -gt 0 ]; then
-		log_write $TRG "${OBJ_NAME} (ERROR: Missing $MISSING_COUNT of $ATTRIB_TOTAL attributes)"
+		log_summary " ${OBJ_NAME}" "MISSING $MISSING_COUNT of $ATTRIB_TOTAL attributes"
 	else
-		log_write $TRG "${OBJ_NAME} (Found: $FOUND_COUNT of $ATTRIB_TOTAL attributes)"
+		log_summary " ${OBJ_NAME}" "Found $FOUND_COUNT of $ATTRIB_TOTAL attributes"
 	fi
 
-	ERR_ATTR=$((ERR_ATTR + MISSING_COUNT))
+	ERR_ATT=$((ERR_ATT + MISSING_COUNT))
 	return 0
 }
 
-log_summary() {
+log_detail() {
 	echo "$@" | tee -a $LOG_SUMMARY
 }
 
-log_write() {
-	LOGFILE="$LOGROOT/$1"
-	echo "${INDENT}$2" >> $LOGFILE
+log_summary() {
+	printf "$FMT_CURRENT" "$1" "$2" | tee -a $LOG_SUMMARY
 }
 
-log_error() {
-	LOGFILE="$LOGROOT/$1"
-	echo "${INDENT}$2" >> $LOGFILE
-	((TOTAL_ERRORS++))
-	((CHAIN_STATUS++))
+get_cluster() {
+	ldap_cmd $FILE_CLUSTERS "" "(objectclass=nCSNetWareCluster)"
+	CLUSTER_COUNT=$(grep -i ^cn: $FILE_CLUSTERS | wc -l)
+	if [ $CLUSTER_COUNT -lt 1 ]; then
+		((TOTAL_ERRORS++))
+		log_detail "No NCS clusters found"
+		log_detail
+		rm -rf $LOGROOT
+		show_summary
+		exit 0
+	fi
+	CN_CLUSTER=$(cluster info basic 2>/dev/null | grep 'Cluster:' | awk '{print $2}' | cut -d, -f1)
+	if [ -z "$CN_CLUSTER" ]; then
+		((TOTAL_ERRORS++))
+		log_detail "ERROR: Cannot determine node's cluster membership"
+		log_detail
+		rm -rf $LOGROOT
+		show_summary
+		exit 1
+	fi
+
+	DN_CLUSTERS=''
+	for I in $(grep -i "^dn:" $FILE_CLUSTERS | awk '{print $2}')
+	do
+		TMPI=$(echo $I | sed -e 's/cn=//g;s/,.*//g')
+		DN_CLUSTERS="$TMPI $DN_CLUSTERS"
+	done
+	log_summary "Clusters:" "$DN_CLUSTERS"
+
+	DN_CLUSTER=$(grep -i "^dn:.*$CN_CLUSTER" $FILE_CLUSTERS | awk '{print $2}')
+	DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
+	#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT
+	log_summary "Node in Cluster:" "$CN_CLUSTER"
 }
+
+debug() {
+	echo
+	for i in "$@"
+	do
+		printf "$i="
+		eval echo \${$i}
+	done
+	echo
+}
+
+validate_required_objects() {
+	log_detail "Checking Required Objects"
+	if [ -s $FILE_VOLUME_RESOURCE ]; then
+#		debug DN_VOLUME_RESOURCE FILE_VOLUME_RESOURCE
+		if grep -e "^dn: cn=$DN_VOLUME_RESOURCE" $FILE_VOLUME_RESOURCE &>/dev/null; then
+			log_summary " $DN_VOLUME_RESOURCE" "Found Volume Resource Object"
+		else
+			log_summary " $DN_VOLUME_RESOURCE" "MISSING Volume Resource Object"
+			((ERR_OBJ++))
+		fi
+	fi
+	if [ -s $FILE_NCPSERVER ]; then
+		if grep -e "^dn: $DN_NCPSERVER" $FILE_NCPSERVER &>/dev/null; then
+			log_summary " ${CN_NCPSERVER##cn=}" "Found NCP Server Object"
+		else
+			log_summary " ${CN_NCPSERVER##cn=}" "MISSING NCP Server Object"
+			((ERR_OBJ++))
+		fi
+	else
+		log_summary " NCP Server Object" "Unknown"
+		((ERR_OBJ++))
+	fi
+	if [ -s $FILE_VOLUME ]; then
+		if grep -e "^dn: $DN_VOLUME" $FILE_VOLUME &>/dev/null; then
+			log_summary " ${CN_VOLUME##cn=}" "Found Volume Object"
+		else
+			log_summary " ${CN_VOLUME##cn=}" "MISSING Volume Object"
+			((ERR_OBJ++))
+		fi
+	else
+		log_summary " Volume Object" "Unknown"
+		((ERR_OBJ++))
+	fi
+	if [ -s $FILE_POOL ]; then
+		if grep -e "^dn: $DN_POOL" $FILE_POOL &>/dev/null; then
+			log_summary " ${CN_POOL##cn=}" "Found Pool Object"
+		else
+			log_summary " ${CN_POOL##cn=}" "MISSING Pool Object"
+			((ERR_OBJ++))
+		fi
+	else
+		log_summary " Pool Object" "Unknown"
+		((ERR_OBJ++))
+	fi
+}
+
+validate_object_attributes() {
+	log_detail "Checking Object Attributes"
+	check_attributes VolumeResource "${DN_VOLUME_RESOURCE##cn=}" $FILE_VOLUME_RESOURCE 
+	check_attributes Server "${CN_NCPSERVER##cn=}" $FILE_NCPSERVER
+	check_attributes Volume "${CN_VOLUME##cn=}" $FILE_VOLUME
+	check_attributes Pool "${CN_POOL##cn=}" $FILE_POOL
+}
+
+confirm_object_links() {
+	log_detail "Confirming Object Links"
+	FMT_PREV=$FMT_CURRENT
+	FMT_CURRENT=$FMT_SHORT
+	DN_VR=$(grep -i ^dn: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	DN_VR2NS=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	DN_VR2VL=$(grep -i ^nCSVolumes: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	DN_NS=$(grep -i ^dn: $FILE_NCPSERVER | awk '{print $2}')
+	DN_NS2VR=$(grep -i ^Resource: $FILE_NCPSERVER | awk '{print $2}')
+	DN_NS2VL=$(grep -i ^nCSVolumes: $FILE_NCPSERVER | awk '{print $2}')
+	DN_NS2CL=$(grep -i ^nCSNetWareCluster: $FILE_NCPSERVER | awk '{print $2}')
+	DN_VL=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
+	DN_VL2NS=$(grep -i ^hostServer: $FILE_VOLUME | awk '{print $2}')
+	DN_VL2PL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
+	DN_PL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
+	DN_PL2NS=$(grep -i ^hostServer: $FILE_POOL | awk '{print $2}')
+	#debug DN_VR DN_VR2NS DN_VR2VL DN_NS DN_NS2VR DN_NS2VL DN_NS2CL DN_VL DN_VL2NS DN_VL2PL DN_PL DN_PL2NS
+
+	if [ "$DN_VR2NS" = "$DN_NS" ]; then
+		log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_NCPSERVER##cn=}"
+	else
+		log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_NCPSERVER##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_NS2VR" = "$DN_VR" ]; then
+		log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} <- ${CN_NCPSERVER##cn=}"
+	else
+		log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} <- ${CN_NCPSERVER##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_NS2VL" = "$DN_VL" ]; then
+		log_summary " Pass" "${CN_NCPSERVER##cn=} -> ${CN_VOLUME##cn=}"
+	else
+		log_summary " FAILED" "${CN_NCPSERVER##cn=} -> ${CN_VOLUME##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_VL2NS" = "$DN_NS" ]; then
+		log_summary " Pass" "${CN_NCPSERVER##cn=} <- ${CN_VOLUME##cn=}"
+	else
+		log_summary " FAILED" "${CN_NCPSERVER##cn=} <- ${CN_VOLUME##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_VR2VL" = "$DN_VL" ]; then
+		log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_VOLUME##cn=}"
+	else
+		log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_VOLUME##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_NS2CL" = "$DN_CLUSTER" ]; then
+		log_summary " Pass" "${CN_NCPSERVER##cn=} -> ${CN_CLUSTER##cn=}"
+	else
+		log_summary " FAILED" "${CN_NCPSERVER##cn=} -> ${CN_CLUSTER##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_VL2PL" = "$DN_PL" ]; then
+		log_summary " Pass" "${CN_VOLUME##cn=} -> ${CN_POOL##cn=}"
+	else
+		log_summary " FAILED" "${CN_VOLUME##cn=} -> ${CN_POOL##cn=}"
+		((ERR_LNK++))
+	fi
+
+	if [ "$DN_PL2NS" = "$DN_NS" ]; then
+		log_summary " Pass" "${CN_POOL##cn=} -> ${CN_NCPSERVER##cn=}"
+	else
+		log_summary " FAILED" "${CN_POOL##cn=} -> ${CN_NCPSERVER##cn=}"
+		((ERR_LNK++))
+	fi
+	FMT_CURRENT=$FMT_PREV
+}
+
 
 ##############################################################################
 # main
@@ -298,179 +422,118 @@ chmod 700 $LOGROOT
 title
 get_credentials
 ldap_check
+get_cluster
+ERR_ATT=0
+check_attributes Cluster "${CN_CLUSTER}" $FILE_CLUSTERS
+TOTAL_ERRORS=$((TOTAL_ERRORS + ERR_ATT))
+TOTAL_ATTR=$((TOTAL_ATTR + ERR_ATT))
 
-ldap_cmd $LOG_CLUSTER "(objectclass=nCSNetWareCluster)"
-CLUSTER_COUNT=$(grep -i ^cn: $LOGROOT/$LOG_CLUSTER | wc -l)
-if [ $CLUSTER_COUNT -gt 1 ]; then
-	log_summary "WARNING: Multiple Clusters in the Tree, Link Checking Disabled."
-	log_summary
-	CHECK_LINKS=0
-fi
-ldap_cmd $LOG_VOL_RES "(objectclass=nCSVolumeResource)"
-log_summary
+SEQ_VR=0
+FILE_VOLUME_RESOURCES="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))_volume-resources.txt"
+ldap_cmd "$FILE_VOLUME_RESOURCES" "$DN_CLUSTER" "(objectclass=nCSVolumeResource)"
 
-OBJ_VOL_RESOURCES=$(grep -i ^cn: $LOGROOT/$LOG_VOL_RES | awk '{print $2}')
-# echo; echo "OBJ_VOL_RESOURCES = $OBJ_VOL_RESOURCES"; echo
-if [ -z "$OBJ_VOL_RESOURCES" ]; then
-	log_summary "ERROR: No nCSVolumeResource objects found"
-	log_summary
+DN_VOLUME_RESOURCE_LIST=$(grep -i ^cn: $FILE_VOLUME_RESOURCES | awk '{print $2}')
+#debug DN_VOLUME_RESOURCE_LIST
+if [ -z "$DN_VOLUME_RESOURCE_LIST" ]; then
+	log_detail "ERROR: No nCSVolumeResource objects found"
+	log_detail
 	((TOTAL_ERRORS++))
 	show_summary
 	exit 1
 fi
-for OBJ_VOL_RES in ${OBJ_VOL_RESOURCES}
+TOTAL_VOLRES=$(echo "$DN_VOLUME_RESOURCE_LIST" | wc -l)
+log_summary "Volume Resources:" $TOTAL_VOLRES
+
+TOTAL_VOLRES=0
+FMT_CURRENT=$FMT_OBJ
+for DN_VOLUME_RESOURCE in ${DN_VOLUME_RESOURCE_LIST}
 do
-	ERR_ATTR=0
-	ERR_LINK=0
+	log_detail
+	log_detail "----------------------------------------------------"
+	log_detail
+	log_detail "$DN_VOLUME_RESOURCE Analyzing Volume Resource"
+	ERR_VR=0
 	ERR_OBJ=0
-	VRLOG="vr$((++VRSEQ))_${OBJ_VOL_RES}.txt"
-	VRCHAIN="analysis_detail${VRSEQ}_${OBJ_VOL_RES}.txt"
-	CHAIN_STATUS=0
-	ldap_cmd $VRLOG "(cn=$OBJ_VOL_RES)"
-	add_chain $VRCHAIN 0 $OBJ_VOL_RES VolumeResource
-	check_attributes VolumeResource $OBJ_VOL_RES $VRLOG $VRCHAIN
-	LN_VR=$OBJ_VOL_RES
-	LN_VR_NS=$(grep -i ^nCSNCPServer: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
+	ERR_ATT=0
+	ERR_LNK=0
+	LNK_VR2NS=0
+	LNK_VR2VL=0
+	LNK_NS2VL=0
+	LNK_VL2NS=0
+	# Query Volume Resource Objects
+	FILE_BASE="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))"
+	FILE_VOLUME_RESOURCE="${FILE_BASE}_${DN_VOLUME_RESOURCE}_1volres.txt"
+	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(cn=$DN_VOLUME_RESOURCE)" "Volume Resource"
 
-	OBJ_CSNCP_SERVERS=$(grep -i ^nCSNCPServer: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
-	# echo; echo "OBJ_CSNCP_SERVERS = $OBJ_CSNCP_SERVERS"; echo
-	NSSEQ=0
-	if [ -z "$OBJ_CSNCP_SERVERS" ]; then
-		log_error $VRCHAIN "ERROR: No nCSNCPServer objects found"
-		((ERR_OBJ++))
+	DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	if [ -n "$DN_NCPSERVER" ]; then
+		CN_NCPSERVER=$(echo $DN_NCPSERVER | cut -d, -f1)
+		FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
+		ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "($CN_NCPSERVER)"  "NCP Server"
 	else
-		for OBJ_CSNCP_SERVER in ${OBJ_CSNCP_SERVERS}
-		do
-			NSLOG="ns$((++NSSEQ))_${OBJ_CSNCP_SERVER}.txt"
-			ldap_cmd $NSLOG "(cn=$OBJ_CSNCP_SERVER)"
-			add_chain $VRCHAIN 1 $OBJ_CSNCP_SERVER Server
-			check_attributes Server $OBJ_CSNCP_SERVER $NSLOG $VRCHAIN
-			if (( $CHECK_LINKS )); then
-				LN_NS=$OBJ_CSNCP_SERVER
-				LN_NS_VR=$(grep -i ^Resource: $LOGROOT/$NSLOG | cut -d= -f2 | cut -d, -f1)
-				if [ "$LN_VR" = "$LN_NS_VR" -a "$LN_NS" = "$LN_VR_NS" ]; then
-					log_write $VRCHAIN 'LINK: nCSVolumeResource <-> nCSNCPServer: OK'
-					log_write $VRCHAIN "   #[ $LN_VR = $LN_NS_VR -a $LN_NS = $LN_VR_NS ]"
-				else
-					log_error $VRCHAIN 'LINK: nCSVolumeResource <-> nCSNCPServer: ERROR: Link mismatch'
-					log_write $VRCHAIN "    [ $LN_VR = $LN_NS_VR -a $LN_NS = $LN_VR_NS ]"
-					((ERR_LINK++))
-				fi
-			fi
-
-			OBJ_CS_CLUSTERS=$(grep -i ^nCSNetWareCluster: $LOGROOT/$NSLOG | cut -d= -f2 | cut -d, -f1)
-			# echo; echo "OBJ_CS_CLUSTERS = $OBJ_CS_CLUSTERS"; echo
-			CLSEQ=0
-			if [ -z "$OBJ_CS_CLUSTERS" ]; then
-				log_error $VRCHAIN "ERROR: No nCSNetWareCluster objects found"
-				((ERR_OBJ++))
-			else
-				for OBJ_CS_CLUSTER in ${OBJ_CS_CLUSTERS}
-				do
-					CLOG="cl$((++CLSEQ))_${OBJ_CS_CLUSTER}.txt"
-					ldap_cmd $CLOG "(cn=$OBJ_CS_CLUSTER)"
-					add_chain $VRCHAIN 2 $OBJ_CS_CLUSTER Cluster
-					check_attributes Cluster $OBJ_CS_CLUSTER $CLOG $VRCHAIN
-					if (( $CHECK_LINKS )); then
-						LN_NS_CL=$OBJ_CS_CLUSTER
-						LN_CL=$(grep -i ^dn: $LOGROOT/$CLOG | uniq | cut -d= -f2 | cut -d, -f1)
-						if [ "$LN_CL" = "$LN_NS_CL" ]; then
-							log_write $VRCHAIN 'LINK: nCSNCPServer --> nCSNetWareCluster: OK'
-							log_write $VRCHAIN "   #[ $LN_CL = $LN_NS_CL ]"
-						else
-							log_error $VRCHAIN 'LINK: nCSNCPServer --> nCSNetwareCluster: ERROR: Link mismatch'
-							log_write $VRCHAIN "    [ $LN_CL = $LN_NS_CL ]"
-							((ERR_LINK++))
-						fi
-					fi
-				done
-			fi
-		done
+		LNK_VR2NS=1
 	fi
 
-	OBJ_CS_VOLS=$(grep -i ^nCSVolumes: $LOGROOT/$VRLOG | cut -d= -f2 | cut -d, -f1)
-	# echo; echo "OBJ_CS_VOLS = $OBJ_CS_VOLS"; echo
-	VOLSEQ=0
-	if [ -z "$OBJ_CS_VOLS" ]; then
-		log_error $VRCHAIN "ERROR: No ncs Volume objects found"
-		((ERR_OBJ++))
+	DN_VOLUME=$(grep -i ^nCSVolumes: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	if [ -n "$DN_VOLUME" ]; then
+		CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+		FILE_VOLUME="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volume.txt"
+# consider changing DN_CLUSTER_PARENT to the nCSVolumes dn found in the FILE_VOLUME_RESOURCE file
+		ldap_cmd "$FILE_VOLUME" "$DN_CLUSTER_PARENT" "($CN_VOLUME)" "Volume"
+
+		DN_POOL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
+		CN_POOL=$(echo $DN_POOL | cut -d, -f1)
+		FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
+		ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "($CN_POOL)" "Pool"
 	else
-		for OBJ_CS_VOL in ${OBJ_CS_VOLS}
-		do
-			VOLOG="vl$((++VOLSEQ))_${OBJ_CS_VOL}.txt"
-			ldap_cmd $VOLOG "(cn=$OBJ_CS_VOL)"
-			add_chain $VRCHAIN 1 $OBJ_CS_VOL Volume
-			check_attributes Volume $OBJ_CS_VOL $VOLOG $VRCHAIN
-			if (( $CHECK_LINKS )); then
-				LN_VR_VL=$OBJ_CS_VOL
-				LN_VL_NS=$(grep -i ^hostServer: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
-				LN_VL_PL=$(grep -i ^nssfsPool: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
-				LN_NS_VL=$(grep -i ^nCSVolumes: $LOGROOT/$NSLOG | grep ${OBJ_CS_VOL} | cut -d= -f2 | cut -d, -f1)
-				LN_VL=$(grep -i ^dn: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
-				if [ "$LN_VL" = "$LN_NS_VL" -a "$LN_NS" = "$LN_VL_NS" ]; then
-					log_write $VRCHAIN 'LINK: nCSVolumes <-> nCSNCPServer: OK'
-					log_write $VRCHAIN "   #[ $LN_VL = $LN_NS_VL -a $LN_NS = $LN_VL_NS ]"
-				else
-					log_error $VRCHAIN 'LINK: nCSVolumes <-> nCSNCPServer: ERROR: Link mismatch'
-					log_write $VRCHAIN "    [ $LN_VL = $LN_NS_VL -a $LN_NS = $LN_VL_NS ]"
-					((ERR_LINK++))
-				fi
-				if [ "$LN_VL" = "$LN_VR_VL" ]; then
-					log_write $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: OK'
-					log_write $VRCHAIN "   #[ $LN_VL = $LN_VR_VL ]"
-				else
-					log_error $VRCHAIN 'LINK: nCSVolumeResource --> nCSVolumes: ERROR: Link mismatch'
-					log_write $VRCHAIN "    [ $LN_VL = $LN_VR_VL ]"
-					((ERR_LINK++))
-				fi
-			fi
-			OBJ_CS_POOLS=$(grep -i ^nssfsPool: $LOGROOT/$VOLOG | cut -d= -f2 | cut -d, -f1)
-			# echo; echo "OBJ_CS_POOLS = $OBJ_CS_POOLS"; echo
-			POOLSEQ=0
-			if [ -z "$OBJ_CS_POOLS" ]; then
-				log_error $VRCHAIN "ERROR: No ncs nssfsPool objects found"
-				((ERR_OBJ++))
-			else
-				for OBJ_CS_POOL in ${OBJ_CS_POOLS}
-				do
-					POOLOG="pl$((++POOLSEQ))_${OBJ_CS_POOL}.txt"
-					ldap_cmd $POOLOG "(cn=$OBJ_CS_POOL)"
-					add_chain $VRCHAIN 2 $OBJ_CS_POOL Pool
-					check_attributes Pool $OBJ_CS_POOL $POOLOG $VRCHAIN
-					if (( $CHECK_LINKS )); then
-						LN_PL_NS=$(grep -i ^hostServer: $LOGROOT/$POOLOG | uniq | cut -d= -f2 | cut -d, -f1)
-						LN_PL=$(grep -i ^nssfsPool: $LOGROOT/$POOLOG | cut -d= -f2 | cut -d, -f1)
-						if [ "$LN_NS" = "$LN_PL_NS" ]; then
-							log_write $VRCHAIN 'LINK: nssfsPool --> nCSNCPServer: OK'
-							log_write $VRCHAIN "   #[ $LN_NS = $LN_PL_NS ]"
-						else
-							log_error $VRCHAIN 'LINK: nssfsPool --> nCSNCPServer: ERROR: Link mismatch'
-							log_write $VRCHAIN "    [ $LN_NS = $LN_PL_NS ]"
-							((ERR_LINK++))
-						fi
-					fi
-				done
-			fi
-		done
+		LNK_VR2VL=1
 	fi
-	echo >> $LOGROOT/$VRCHAIN
-	if [ $CHAIN_STATUS -gt 0 ]; then
-		show_links >> $LOGROOT/$VRCHAIN
-		echo "$OBJ_VOL_RES Volume Resource Status:   Errors Found" >> $LOGROOT/$VRCHAIN
-		echo "$OBJ_VOL_RES  Missing Objects:         $ERR_OBJ" >> $LOGROOT/$VRCHAIN
-		echo "$OBJ_VOL_RES  Missing Attributes:      $ERR_ATTR" >> $LOGROOT/$VRCHAIN
-		if (( $CHECK_LINKS )); then
-			echo "$OBJ_VOL_RES  Mismatched Object Links: $ERR_LINK" >> $LOGROOT/$VRCHAIN
+	if [ $LNK_VR2VL -eq 0 -a $LNK_VR2NS -eq 1 ]; then
+		# query volume for ncpserver
+		DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME | awk '{print $2}')
+		if [ -n "$DN_NCPSERVER" ]; then
+			CN_NCPSERVER=$(echo $DN_NCPSERVER | cut -d, -f1)
+			FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
+			ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "($CN_NCPSERVER)"  "NCP Server*"
+		else
+			LNK_VL2NS=1
 		fi
-		echo "$OBJ_VOL_RES  TOTAL Errors:            $((ERR_OBJ+ERR_ATTR+ERR_LINK))" >> $LOGROOT/$VRCHAIN
-	else
-		echo "$OBJ_VOL_RES Volume Resource Status: Passed" >> $LOGROOT/$VRCHAIN
 	fi
-	printf "\n---------------------\n" >> $LOGROOT/$VRCHAIN
-	log_summary
-	TOTAL_OBJ=$((TOTAL_OBJ+ERR_OBJ))
-	TOTAL_ATTR=$((TOTAL_OBJ+ERR_ATTR))
-	TOTAL_LINK=$((TOTAL_OBJ+ERR_LINK))
+	if [ $LNK_VR2NS -eq 0 -a $LNK_VR2VL -eq 1 ]; then
+		DN_VOLUME=$(grep -i ^nCSVolumes: $FILE_NCPSERVER | awk '{print $2}')
+		if [ -n "$DN_VOLUME" ]; then
+			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+			FILE_VOLUME="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volume.txt"
+			# consider changing DN_CLUSTER_PARENT to the nCSVolumes dn found in the FILE_VOLUME file
+			ldap_cmd "$FILE_VOLUME" "$DN_CLUSTER_PARENT" "($CN_VOLUME)" "Volume*"
+
+			DN_POOL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
+			CN_POOL=$(echo $DN_POOL | cut -d, -f1)
+			FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
+			ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "($CN_POOL)" "Pool*"
+		else
+			LNK_NS2VL=1
+		fi
+	fi
+
+	validate_required_objects
+	validate_object_attributes
+	confirm_object_links
+
+	TOTAL_OBJ=$((TOTAL_OBJ + ERR_OBJ))
+	TOTAL_ATTR=$((TOTAL_ATTR + ERR_ATT))
+	TOTAL_LINK=$((TOTAL_LINK + ERR_LNK))
+	ERR_VR=$((ERR_OBJ + ERR_ATT + ERR_LNK))
+	TOTAL_ERRORS=$((TOTAL_ERRORS + ERR_OBJ + ERR_ATT + ERR_LNK))
+	[ $ERR_OBJ -gt 0 ] && log_summary "Object Errors:" $ERR_OBJ
+	[ $ERR_ATT -gt 0 ] && log_summary "Attribute Errors:" $ERR_ATT
+	[ $ERR_LNK -gt 0 ] && log_summary "Link Errors:" $ERR_LNK
+	if (( ERR_VR )); then
+		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Errors Found"
+	else
+		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Passed"
+	fi
+	((TOTAL_VOLRES++))
 done
 
 show_summary

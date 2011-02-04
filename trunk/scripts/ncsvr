@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110204.DEV.12
+VER=2.0.0-110204.DEV.15
 MODATE="2011 Feb 04"
 
 # todo
@@ -525,9 +525,9 @@ do
 	TOTAL_LINK=$((TOTAL_LINK + ERR_LNK))
 	ERR_VR=$((ERR_OBJ + ERR_ATT + ERR_LNK))
 	TOTAL_ERRORS=$((TOTAL_ERRORS + ERR_OBJ + ERR_ATT + ERR_LNK))
-	[ $ERR_OBJ -gt 0 ] && log_summary "Object Errors:" $ERR_OBJ
-	[ $ERR_ATT -gt 0 ] && log_summary "Attribute Errors:" $ERR_ATT
-	[ $ERR_LNK -gt 0 ] && log_summary "Link Errors:" $ERR_LNK
+	[ $ERR_OBJ -gt 0 ] && log_summary "Missing Objects:" $ERR_OBJ
+	[ $ERR_ATT -gt 0 ] && log_summary "Missing Attributes:" $ERR_ATT
+	[ $ERR_LNK -gt 0 ] && log_summary "Mismatched Object Links:" $ERR_LNK
 	if (( ERR_VR )); then
 		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Errors Found"
 	else

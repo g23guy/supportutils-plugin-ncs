@@ -1,10 +1,11 @@
 #!/bin/bash
-VER=2.0.0-110204.DEV.15
-MODATE="2011 Feb 04"
+VER=2.0.0-110207.DEV.6
+MODATE="2011 Feb 07"
 
 # todo
 # 1. put cluster ldap query in it's own file.
 # 2. read cn location from file's dn:
+# 3. check missing object cases, like volume and ncpserver together
 
 ##############################################################################
 #  ncsvr - Novell Cluster Service Volume Resource Plugin for Supportconfig
@@ -67,6 +68,7 @@ TOTAL_OBJ=0
 TOTAL_ATTR=0
 TOTAL_LINK=0
 TOTAL_VOLRES=0
+TOTAL_VOLRES_ERRORS=0
 PATH=/bin:/sbin:$PATH
 export PATH
 FMT_INTRO="%-25s %s\n"
@@ -184,7 +186,8 @@ ldap_check() {
 show_summary() {
 	log_detail
 	log_detail "===================================================="
-	log_summary "TOTAL Volume Resources Analyzed:" "$TOTAL_VOLRES"
+	log_summary "Volume Resources Analyzed:" "$TOTAL_VOLRES"
+	log_summary "Volume Resources with Errors:" "$TOTAL_VOLRES_ERRORS"
 	log_summary "TOTAL Error Count:" "$TOTAL_ERRORS"
 	log_summary "TOTAL Object Errors:" "$TOTAL_OBJ"
 	log_summary "TOTAL Attribute Errors:" "$TOTAL_ATTR"
@@ -330,28 +333,68 @@ validate_required_objects() {
 
 validate_object_attributes() {
 	log_detail "Checking Object Attributes"
-	check_attributes VolumeResource "${DN_VOLUME_RESOURCE##cn=}" $FILE_VOLUME_RESOURCE 
-	check_attributes Server "${CN_NCPSERVER##cn=}" $FILE_NCPSERVER
-	check_attributes Volume "${CN_VOLUME##cn=}" $FILE_VOLUME
-	check_attributes Pool "${CN_POOL##cn=}" $FILE_POOL
+	if [ -s $FILE_VOLUME_RESOURCE ]; then
+		check_attributes VolumeResource "${DN_VOLUME_RESOURCE##cn=}" $FILE_VOLUME_RESOURCE 
+	else
+		log_summary "Volume Resource Object Missing" "Skip Attribute Check"
+	fi
+	if [ -s $FILE_NCPSERVER ]; then
+		check_attributes Server "${CN_NCPSERVER##cn=}" $FILE_NCPSERVER
+	else
+		log_summary "NCP Server Object Missing" "Skip Attribute Check"
+	fi
+	if [ -s $FILE_VOLUME ]; then
+		check_attributes Volume "${CN_VOLUME##cn=}" $FILE_VOLUME
+	else
+		log_summary " Unidentified Volume Object" "Skipping Attribute Check"
+	fi
+	if [ -s $FILE_POOL ]; then
+		check_attributes Pool "${CN_POOL##cn=}" $FILE_POOL
+	else
+		log_summary " Unidentified Pool Object" "Skipping Attribute Check"
+	fi
 }
 
 confirm_object_links() {
 	log_detail "Confirming Object Links"
 	FMT_PREV=$FMT_CURRENT
 	FMT_CURRENT=$FMT_SHORT
-	DN_VR=$(grep -i ^dn: $FILE_VOLUME_RESOURCE | awk '{print $2}')
-	DN_VR2NS=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
-	DN_VR2VL=$(grep -i ^nCSVolumes: $FILE_VOLUME_RESOURCE | awk '{print $2}')
-	DN_NS=$(grep -i ^dn: $FILE_NCPSERVER | awk '{print $2}')
-	DN_NS2VR=$(grep -i ^Resource: $FILE_NCPSERVER | awk '{print $2}')
-	DN_NS2VL=$(grep -i ^nCSVolumes: $FILE_NCPSERVER | awk '{print $2}')
-	DN_NS2CL=$(grep -i ^nCSNetWareCluster: $FILE_NCPSERVER | awk '{print $2}')
-	DN_VL=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
-	DN_VL2NS=$(grep -i ^hostServer: $FILE_VOLUME | awk '{print $2}')
-	DN_VL2PL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
-	DN_PL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
-	DN_PL2NS=$(grep -i ^hostServer: $FILE_POOL | awk '{print $2}')
+	if [ -s $FILE_VOLUME_RESOURCE ]; then
+		DN_VR=$(grep -i ^dn: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+		DN_VR2NS=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+		DN_VR2VL=$(grep -i ^nCSVolumes: $FILE_VOLUME_RESOURCE | awk '{print $2}')
+	else
+		DN_VR='vr?'
+		DN_VR2NS='vr2ns?'
+		DN_VR2VL='vr2vl?'
+	fi
+	if [ -s $FILE_NCPSERVER ]; then
+		DN_NS=$(grep -i ^dn: $FILE_NCPSERVER | awk '{print $2}')
+		DN_NS2VR=$(grep -i ^Resource: $FILE_NCPSERVER | awk '{print $2}')
+		DN_NS2VL=$(grep -i ^nCSVolumes: $FILE_NCPSERVER | awk '{print $2}')
+		DN_NS2CL=$(grep -i ^nCSNetWareCluster: $FILE_NCPSERVER | awk '{print $2}')
+	else
+		DN_NS='ns?'
+		DN_NS2VR='ns2vr?'
+		DN_NS2VL='ns2vl?'
+		DN_NS2CL='ns2cl?'
+	fi
+	if [ -s $FILE_VOLUME ]; then
+		DN_VL=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
+		DN_VL2NS=$(grep -i ^hostServer: $FILE_VOLUME | awk '{print $2}')
+		DN_VL2PL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
+	else
+		DN_VL='vl?'
+		DN_VL2NS='vl2ns?'
+		DN_VL2PL='vl2pl?'
+	fi
+	if [ -s $FILE_POOL ]; then
+		DN_PL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
+		DN_PL2NS=$(grep -i ^hostServer: $FILE_POOL | awk '{print $2}')
+	else
+		DN_PL='pl?'
+		DN_PL2NS='pl2ns?'
+	fi
 	#debug DN_VR DN_VR2NS DN_VR2VL DN_NS DN_NS2VR DN_NS2VL DN_NS2CL DN_VL DN_VL2NS DN_VL2PL DN_PL DN_PL2NS
 
 	if [ "$DN_VR2NS" = "$DN_NS" ]; then
@@ -460,60 +503,28 @@ do
 	LNK_VR2VL=0
 	LNK_NS2VL=0
 	LNK_VL2NS=0
-	# Query Volume Resource Objects
 	FILE_BASE="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))"
 	FILE_VOLUME_RESOURCE="${FILE_BASE}_${DN_VOLUME_RESOURCE}_1volres.txt"
-	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(cn=$DN_VOLUME_RESOURCE)" "Volume Resource"
+	FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
+	FILE_VOLUME="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volume.txt"
+	FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
+	CN_NCPSERVER="Unknown NCP Server"
+	CN_VOLUME="Unknown Volume"
+	CN_POOL="Unknown Pool"
+
+	# Query Volume Resource Objects
+	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$DN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" "Volume Resource"
 
 	DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
 	if [ -n "$DN_NCPSERVER" ]; then
 		CN_NCPSERVER=$(echo $DN_NCPSERVER | cut -d, -f1)
-		FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
-		ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "($CN_NCPSERVER)"  "NCP Server"
-	else
-		LNK_VR2NS=1
-	fi
-
-	DN_VOLUME=$(grep -i ^nCSVolumes: $FILE_VOLUME_RESOURCE | awk '{print $2}')
-	if [ -n "$DN_VOLUME" ]; then
-		CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
-		FILE_VOLUME="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volume.txt"
-# consider changing DN_CLUSTER_PARENT to the nCSVolumes dn found in the FILE_VOLUME_RESOURCE file
-		ldap_cmd "$FILE_VOLUME" "$DN_CLUSTER_PARENT" "($CN_VOLUME)" "Volume"
-
-		DN_POOL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
-		CN_POOL=$(echo $DN_POOL | cut -d, -f1)
-		FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
-		ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "($CN_POOL)" "Pool"
-	else
-		LNK_VR2VL=1
-	fi
-	if [ $LNK_VR2VL -eq 0 -a $LNK_VR2NS -eq 1 ]; then
-		# query volume for ncpserver
-		DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME | awk '{print $2}')
-		if [ -n "$DN_NCPSERVER" ]; then
-			CN_NCPSERVER=$(echo $DN_NCPSERVER | cut -d, -f1)
-			FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
-			ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "($CN_NCPSERVER)"  "NCP Server*"
-		else
-			LNK_VL2NS=1
-		fi
-	fi
-	if [ $LNK_VR2NS -eq 0 -a $LNK_VR2VL -eq 1 ]; then
-		DN_VOLUME=$(grep -i ^nCSVolumes: $FILE_NCPSERVER | awk '{print $2}')
-		if [ -n "$DN_VOLUME" ]; then
-			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
-			FILE_VOLUME="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volume.txt"
-			# consider changing DN_CLUSTER_PARENT to the nCSVolumes dn found in the FILE_VOLUME file
-			ldap_cmd "$FILE_VOLUME" "$DN_CLUSTER_PARENT" "($CN_VOLUME)" "Volume*"
-
-			DN_POOL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
-			CN_POOL=$(echo $DN_POOL | cut -d, -f1)
-			FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
-			ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "($CN_POOL)" "Pool*"
-		else
-			LNK_NS2VL=1
-		fi
+		ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "(&($CN_NCPSERVER)(objectClass=ncpServer))" "NCP Server"
+		ldap_cmd "$FILE_VOLUME" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=Volume))" "Volume"
+		ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=nssfsPool))" "Pool"
+		DN_VOLUME=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
+		DN_POOL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
+		[ -z "$DN_VOLUME" ] && rm $FILE_VOLUME || CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+		[ -z "$DN_POOL" ] && rm $FILE_POOL || CN_POOL=$(echo $DN_POOL | cut -d, -f1)
 	fi
 
 	validate_required_objects
@@ -534,6 +545,7 @@ do
 		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Passed"
 	fi
 	((TOTAL_VOLRES++))
+	[ $ERR_VR -gt 0 ] && ((TOTAL_VOLRES_ERRORS++))
 done
 
 show_summary

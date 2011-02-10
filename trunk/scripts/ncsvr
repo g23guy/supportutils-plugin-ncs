@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110210.DEV.2
+VER=2.0.0-110210.DEV.5
 MODATE="2011 Feb 10"
 
 # todo
@@ -37,11 +37,6 @@ MODATE="2011 Feb 10"
 #     Jason Record (jrecord@novell.com)
 #
 ##############################################################################
-
-# Known Issues
-# 1. Generates duplicate records with BCC
-# 2. Does not support multiple clusters in a tree
-
 
 # global variables
 ##############################################################################
@@ -160,7 +155,7 @@ ldap_cmd() {
 	echo "#------------------------------------------------#" >> $OUTFILE
 	echo "# $LDAP_BIN ${AUTH_OPTIONS} -b \"$BASEDN\" -s sub \"$SEARCH\"" | sed -e "s/-w $NCSVR_PASS/-W/" >> $OUTFILE
 	if [ -n "$COMMENT" ]; then
-		log_summary "Query $COMMENT" "$SEARCH"
+		log_summary "$COMMENT" "$SEARCH"
 	else
 		log_summary "Query" "$SEARCH"
 	fi
@@ -189,10 +184,10 @@ show_summary() {
 	log_detail "===================================================="
 	log_summary "Volume Resources Analyzed:" "$TOTAL_VOLRES"
 	log_summary "Volume Resources with Errors:" "$TOTAL_VOLRES_ERRORS"
-	log_summary "TOTAL Error Count:" "$TOTAL_ERRORS"
-	log_summary "TOTAL Object Errors:" "$TOTAL_OBJ"
-	log_summary "TOTAL Attribute Errors:" "$TOTAL_ATTR"
-	log_summary "TOTAL Link Errors:" "$TOTAL_LINK"
+	log_summary "Missing Objects:" "$TOTAL_OBJ"
+	log_summary "Missing Attributes:" "$TOTAL_ATTR"
+	log_summary "Mismatched Object Links:" "$TOTAL_LINK"
+	log_summary "TOTAL ERRORS:" "$TOTAL_ERRORS"
 	log_detail
 }
 
@@ -280,12 +275,7 @@ get_cluster() {
 	fi
 
 	FILE_NODE="/etc/opt/novell/ncs/nodename"
-	if [ -s $FILE_NODE ]; then
-		CN_NODE=$(cat $FILE_NODE)
-		log_summary "Node Name:" "$CN_NODE"
-	else
-		CN_NODE=''
-	fi
+	[ -s $FILE_NODE ] && CN_NODE=$(cat $FILE_NODE) || CN_NODE='Unknown'
 	
 	DN_CLUSTERS=''
 	for I in $(grep -i "^dn:" $FILE_CLUSTERS | awk '{print $2}')
@@ -299,6 +289,12 @@ get_cluster() {
 	DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
 	#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT
 	log_summary "Node in Cluster:" "$CN_CLUSTER"
+	log_summary " Node Name:" "$CN_NODE"
+	if cluster view | grep -i epoch &>/dev/null; then
+		log_summary " Node Status" "Joined"
+	else
+		log_summary " Node Status" "Not Joined"
+	fi
 }
 
 debug() {
@@ -510,21 +506,22 @@ confirm_object_links() {
 object_status() {
 	FMT_PREV=$FMT_CURRENT
 	FMT_CURRENT=$FMT_LONG
-	log_detail "Resource Component Status on this Node"
-	[ -n "$CN_NODE" ] && LSMSG=" $CN_NODE" || LSMSG=''
-	if cluster view | grep -i epoch &>/dev/null; then
-		log_summary " Cluster Status for Node:$LSMSG" "Joined"
-	else
-		log_summary " Cluster Status for Node:$LSMSG" "Not Joined"
-	fi
+	log_detail "Resource Status From Node: $CN_NODE"
 	VRENTRY=$(cluster resources | grep $CN_VOLUME_RESOURCE)
-	VRSTATUS=$(echo $VRENTRY | awk '{print $2}')
-	VRNODE=$(echo $VRENTRY | awk '{print $3}')
-	case $VRSTATUS in
-	*unning) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS on $VRNODE" ;;
-	*ffline) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS" ;;
-	*)  log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Unknown" ;;
-	esac
+	if [ -n "$VRENTRY" ]; then
+		VRSTATUS=$(echo $VRENTRY | awk '{print $2}')
+		if cluster resources 2>/dev/null | grep -i "Name.*BCC" &>/dev/null; then
+			VRNODE=$(echo $VRENTRY | awk '{print $4}')
+		else
+			VRNODE=$(echo $VRENTRY | awk '{print $3}')
+		fi
+		case $VRSTATUS in
+		*unning) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS on $VRNODE" ;;
+		*) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS" ;;
+		esac
+	else
+		log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Unknown"
+	fi
 	NCP_LOAD="/var/opt/novell/ncs/${CN_VOLUME_RESOURCE}.load"
 	if [ -s $NCP_LOAD ]; then
 		NCP_IP=$(grep add_secondary_ipaddress $NCP_LOAD | awk '{print $3}')
@@ -537,10 +534,20 @@ object_status() {
 		log_summary " NCP Server: ${CN_NCPSERVER##cn=}" "Missing Load Script"		
 	fi
 	CN_POOL_NAME=$(echo $CN_POOL | sed -e "s/cn=${CN_CLUSTER}_//g;s/_POOL$//g")
-	if mount 2>/dev/null | grep -i "nsspool.*name=$CN_POOL_NAME" &>/dev/null; then
-		log_summary " Pool: ${CN_POOL##cn=}" "Mounted"
+	CL_POOL_ENTRY=$(cluster pools 2>/dev/null | grep -i "Pool $CN_POOL_NAME")
+	if [ -n "$CL_POOL_ENTRY" ]; then
+		if echo $CL_POOL_ENTRY | grep -i "Pool ${CN_POOL_NAME}.*Not Active" &>/dev/null; then
+			log_summary " Pool: ${CN_POOL##cn=}" "Not Active"
+		else
+			ACTIVE_NODE=$(echo $CL_POOL_ENTRY | awk '{print $NF}')
+			log_summary " Pool: ${CN_POOL##cn=}" "Active on $ACTIVE_NODE"
+		fi
 	else
-		log_summary " Pool: ${CN_POOL##cn=}" "Not Mounted"
+		if mount 2>/dev/null | grep -i "nsspool.*name=$CN_POOL_NAME" &>/dev/null; then
+			log_summary " Pool: ${CN_POOL##cn=}" "Mounted, Not Active"
+		else
+			log_summary " Pool: ${CN_POOL##cn=}" "Not Mounted"
+		fi
 	fi
 	if [ -n "$DN_VOLUME_LIST" ]; then
 		for DN_VOLUME in $DN_VOLUME_LIST
@@ -615,13 +622,13 @@ do
 	CN_POOL="Unknown Pool"
 
 	# Query Volume Resource Objects
-	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$CN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" "Volume Resource"
+	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$CN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" " Query Volume Resource"
 
 	DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
 	if [ -n "$DN_NCPSERVER" ]; then
 		CN_NCPSERVER=$(echo $DN_NCPSERVER | cut -d, -f1)
-		ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "(&($CN_NCPSERVER)(objectClass=ncpServer))" "NCP Server"
-		ldap_cmd "$FILE_VOLUMES" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=Volume))" "Volumes"
+		ldap_cmd "$FILE_NCPSERVER" "$DN_CLUSTER_PARENT" "(&($CN_NCPSERVER)(objectClass=ncpServer))" " Query NCP Server"
+		ldap_cmd "$FILE_VOLUMES" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=Volume))" " Query Volumes"
 		DN_VOLUME_LIST=$(grep -i ^dn: $FILE_VOLUMES | awk '{print $2}')
 		DN_VOLUME_COUNT=$(echo "$DN_VOLUME_LIST" | wc -l)
 		if [ -n "$DN_VOLUME_LIST" ]; then
@@ -630,10 +637,10 @@ do
 			do
 				CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
 				FILE_VOLUME_ENTRY="${FILE_BASE}_${CN_VOLUME##cn=}_volume.txt"
-				ldap_cmd "$FILE_VOLUME_ENTRY" "$DN_CLUSTER_PARENT" "(&(cn=${CN_VOLUME##cn=})(objectClass=Volume))" "Volume $((SEQ_VL++))/${DN_VOLUME_COUNT}"				
+				ldap_cmd "$FILE_VOLUME_ENTRY" "$DN_CLUSTER_PARENT" "(&(cn=${CN_VOLUME##cn=})(objectClass=Volume))" " Query Volume $((SEQ_VL++))/${DN_VOLUME_COUNT}"				
 			done
 		fi
-		ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=nssfsPool))" "Pool"
+		ldap_cmd "$FILE_POOL" "$DN_CLUSTER_PARENT" "(&(hostServer=$DN_NCPSERVER)(objectClass=nssfsPool))" " Query Pool"
 		DN_POOL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
 		[ -z "$DN_POOL" ] && rm $FILE_POOL || CN_POOL=$(echo $DN_POOL | cut -d, -f1)
 	fi

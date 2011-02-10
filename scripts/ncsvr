@@ -1,6 +1,6 @@
 #!/bin/bash
-VER=2.0.0-110209.DEV.3
-MODATE="2011 Feb 09"
+VER=2.0.0-110210.DEV.2
+MODATE="2011 Feb 10"
 
 # todo
 # 1. put cluster ldap query in it's own file.
@@ -73,6 +73,7 @@ export PATH
 FMT_INTRO="%-20s %s\n"
 FMT_OBJ="%-35s %s\n"
 FMT_SHORT="%-9s %s\n"
+FMT_LONG="%-45s %s\n"
 FMT_CURRENT=$FMT_INTRO
 
 # function definitions
@@ -266,14 +267,26 @@ get_cluster() {
 	fi
 	CN_CLUSTER=$(cluster info basic 2>/dev/null | grep 'Cluster:' | awk '{print $2}' | cut -d, -f1)
 	if [ -z "$CN_CLUSTER" ]; then
-		((TOTAL_ERRORS++))
-		log_summary "ERROR" "Cannot determine node's cluster membership"
-		log_detail
-		show_summary
-		rm -rf $LOGROOT
-		exit 1
+		if [ $CLUSTER_COUNT -eq 1 ]; then
+			CN_CLUSTER=$(grep -i ^cn: $FILE_CLUSTERS | awk '{print $2}')
+		else
+			((TOTAL_ERRORS++))
+			log_summary "ERROR" "Cannot determine node's cluster membership"
+			log_detail
+			show_summary
+			rm -rf $LOGROOT
+			exit 1
+		fi
 	fi
 
+	FILE_NODE="/etc/opt/novell/ncs/nodename"
+	if [ -s $FILE_NODE ]; then
+		CN_NODE=$(cat $FILE_NODE)
+		log_summary "Node Name:" "$CN_NODE"
+	else
+		CN_NODE=''
+	fi
+	
 	DN_CLUSTERS=''
 	for I in $(grep -i "^dn:" $FILE_CLUSTERS | awk '{print $2}')
 	do
@@ -302,10 +315,10 @@ validate_required_objects() {
 	log_detail "Checking Required Objects"
 	if [ -s $FILE_VOLUME_RESOURCE ]; then
 		#debug DN_VOLUME_RESOURCE FILE_VOLUME_RESOURCE
-		if grep -i "^dn: cn=$DN_VOLUME_RESOURCE" $FILE_VOLUME_RESOURCE &>/dev/null; then
-			log_summary " $DN_VOLUME_RESOURCE" "Found Volume Resource Object"
+		if grep -i "^dn: cn=$CN_VOLUME_RESOURCE" $FILE_VOLUME_RESOURCE &>/dev/null; then
+			log_summary " $CN_VOLUME_RESOURCE" "Found Volume Resource Object"
 		else
-			log_summary " $DN_VOLUME_RESOURCE" "MISSING Volume Resource Object"
+			log_summary " $CN_VOLUME_RESOURCE" "MISSING Volume Resource Object"
 			((ERR_OBJ++))
 		fi
 	fi
@@ -320,10 +333,12 @@ validate_required_objects() {
 		log_summary " NCP Server Object" "Unknown"
 		((ERR_OBJ++))
 	fi
-	if [ -s $FILE_VOLUME ]; then
+	if [ -n "$DN_VOLUME_LIST" ]; then
+		SEQ_VL=1
 		for DN_VOLUME in $DN_VOLUME_LIST
 		do
 			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+			FILE_VOLUME="${FILE_BASE}_${CN_VOLUME##cn=}_volume.txt"
 			if grep -i "^dn: $DN_VOLUME" $FILE_VOLUME &>/dev/null; then
 				log_summary " ${CN_VOLUME##cn=}" "Found Volume Object"
 			else
@@ -351,7 +366,7 @@ validate_required_objects() {
 validate_object_attributes() {
 	log_detail "Checking Object Attributes"
 	if [ -s $FILE_VOLUME_RESOURCE ]; then
-		check_attributes VolumeResource "${DN_VOLUME_RESOURCE##cn=}" $FILE_VOLUME_RESOURCE 
+		check_attributes VolumeResource "${CN_VOLUME_RESOURCE}" $FILE_VOLUME_RESOURCE 
 	else
 		log_summary "Volume Resource Object Missing" "Skip Attribute Check"
 	fi
@@ -360,14 +375,17 @@ validate_object_attributes() {
 	else
 		log_summary "NCP Server Object Missing" "Skip Attribute Check"
 	fi
-	if [ -s $FILE_VOLUME ]; then
+	if [ -n "$DN_VOLUME_LIST" ]; then
+		SEQ_VL=1
 		for DN_VOLUME in $DN_VOLUME_LIST
 		do
 			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+			FILE_VOLUME="${FILE_BASE}_${CN_VOLUME##cn=}_volume.txt"
 			check_attributes Volume "${CN_VOLUME##cn=}" $FILE_VOLUME
 		done
 	else
 		log_summary " Unidentified Volume Object(s)" "Skipping Attribute Check"
+		((ERR_OBJ++))
 	fi
 	if [ -s $FILE_POOL ]; then
 		check_attributes Pool "${CN_POOL##cn=}" $FILE_POOL
@@ -419,16 +437,16 @@ confirm_object_links() {
 	#debug DN_VR DN_VR2NS DN_VR2VL DN_NS DN_NS2VR DN_NS2VL DN_NS2CL DN_VL DN_VL2NS DN_VL2PL DN_PL DN_PL2NS
 
 	if [ "$DN_VR2NS" = "$DN_NS" ]; then
-		log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_NCPSERVER##cn=}"
+		log_summary " Pass" "${CN_VOLUME_RESOURCE} -> ${CN_NCPSERVER##cn=}"
 	else
-		log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_NCPSERVER##cn=}"
+		log_summary " FAILED" "${CN_VOLUME_RESOURCE} -> ${CN_NCPSERVER##cn=}"
 		((ERR_LNK++))
 	fi
 
 	if [ "$DN_NS2VR" = "$DN_VR" ]; then
-		log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} <- ${CN_NCPSERVER##cn=}"
+		log_summary " Pass" "${CN_VOLUME_RESOURCE} <- ${CN_NCPSERVER##cn=}"
 	else
-		log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} <- ${CN_NCPSERVER##cn=}"
+		log_summary " FAILED" "${CN_VOLUME_RESOURCE} <- ${CN_NCPSERVER##cn=}"
 		((ERR_LNK++))
 	fi
 
@@ -436,9 +454,9 @@ confirm_object_links() {
 	do
 		CN_VOLUME=$(echo $DN_VR2VL | cut -d, -f1)
 		if echo $DN_VL_LIST | grep $DN_VR2VL &>/dev/null; then
-			log_summary " Pass" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_VOLUME##cn=}"
+			log_summary " Pass" "${CN_VOLUME_RESOURCE} -> ${CN_VOLUME##cn=}"
 		else
-			log_summary " FAILED" "${DN_VOLUME_RESOURCE##cn=} -> ${CN_VOLUME##cn=}"
+			log_summary " FAILED" "${CN_VOLUME_RESOURCE} -> ${CN_VOLUME##cn=}"
 			((ERR_LNK++))
 		fi
 	done
@@ -489,6 +507,55 @@ confirm_object_links() {
 	FMT_CURRENT=$FMT_PREV
 }
 
+object_status() {
+	FMT_PREV=$FMT_CURRENT
+	FMT_CURRENT=$FMT_LONG
+	log_detail "Resource Component Status on this Node"
+	[ -n "$CN_NODE" ] && LSMSG=" $CN_NODE" || LSMSG=''
+	if cluster view | grep -i epoch &>/dev/null; then
+		log_summary " Cluster Status for Node:$LSMSG" "Joined"
+	else
+		log_summary " Cluster Status for Node:$LSMSG" "Not Joined"
+	fi
+	VRENTRY=$(cluster resources | grep $CN_VOLUME_RESOURCE)
+	VRSTATUS=$(echo $VRENTRY | awk '{print $2}')
+	VRNODE=$(echo $VRENTRY | awk '{print $3}')
+	case $VRSTATUS in
+	*unning) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS on $VRNODE" ;;
+	*ffline) log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "$VRSTATUS" ;;
+	*)  log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Unknown" ;;
+	esac
+	NCP_LOAD="/var/opt/novell/ncs/${CN_VOLUME_RESOURCE}.load"
+	if [ -s $NCP_LOAD ]; then
+		NCP_IP=$(grep add_secondary_ipaddress $NCP_LOAD | awk '{print $3}')
+		if ping -c1 -w1 $NCP_IP &>/dev/null; then
+			log_summary " NCP Server: ${CN_NCPSERVER##cn=}" "Pinged $NCP_IP"
+		else
+			log_summary " NCP Server: ${CN_NCPSERVER##cn=}" "Cannot Ping $NCP_IP"
+		fi
+	else
+		log_summary " NCP Server: ${CN_NCPSERVER##cn=}" "Missing Load Script"		
+	fi
+	CN_POOL_NAME=$(echo $CN_POOL | sed -e "s/cn=${CN_CLUSTER}_//g;s/_POOL$//g")
+	if mount 2>/dev/null | grep -i "nsspool.*name=$CN_POOL_NAME" &>/dev/null; then
+		log_summary " Pool: ${CN_POOL##cn=}" "Mounted"
+	else
+		log_summary " Pool: ${CN_POOL##cn=}" "Not Mounted"
+	fi
+	if [ -n "$DN_VOLUME_LIST" ]; then
+		for DN_VOLUME in $DN_VOLUME_LIST
+		do
+			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+			CN_VOLUME_NAME=$(echo $CN_VOLUME | sed -e "s/cn=${CN_CLUSTER}_//g")
+			if mount 2>/dev/null | grep -i "nssvol.*name=$CN_VOLUME_NAME" &>/dev/null; then
+				log_summary " Volume: ${CN_VOLUME##cn=}" "Mounted"
+			else
+				log_summary " Volume: ${CN_VOLUME##cn=}" "Not Mounted"
+			fi
+		done
+	fi
+}
+
 
 ##############################################################################
 # main
@@ -509,7 +576,7 @@ SEQ_VR=0
 FILE_VOLUME_RESOURCES="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))_volume-resources.txt"
 ldap_cmd "$FILE_VOLUME_RESOURCES" "$DN_CLUSTER" "(objectclass=nCSVolumeResource)"
 
-DN_VOLUME_RESOURCE_LIST=$(grep -i ^cn: $FILE_VOLUME_RESOURCES | awk '{print $2}')
+DN_VOLUME_RESOURCE_LIST=$(grep -i ^dn: $FILE_VOLUME_RESOURCES | awk '{print $2}')
 #debug DN_VOLUME_RESOURCE_LIST
 if [ -z "$DN_VOLUME_RESOURCE_LIST" ]; then
 	log_summary " Results" "No Volume Resource Objects Found"
@@ -524,10 +591,12 @@ TOTAL_VOLRES=0
 FMT_CURRENT=$FMT_OBJ
 for DN_VOLUME_RESOURCE in ${DN_VOLUME_RESOURCE_LIST}
 do
+	CN_VOLUME_RESOURCE=$(echo $DN_VOLUME_RESOURCE | cut -d, -f1)
+	CN_VOLUME_RESOURCE="${CN_VOLUME_RESOURCE##cn=}"
 	log_detail
 	log_detail "----------------------------------------------------"
 	log_detail
-	log_detail "$DN_VOLUME_RESOURCE Analyzing Volume Resource"
+	log_detail "${CN_VOLUME_RESOURCE} Analyzing Volume Resource"
 	ERR_VR=0
 	ERR_OBJ=0
 	ERR_ATT=0
@@ -537,16 +606,16 @@ do
 	LNK_NS2VL=0
 	LNK_VL2NS=0
 	FILE_BASE="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))"
-	FILE_VOLUME_RESOURCE="${FILE_BASE}_${DN_VOLUME_RESOURCE}_1volres.txt"
-	FILE_NCPSERVER="${FILE_BASE}_${DN_VOLUME_RESOURCE}_ncpserver.txt"
-	FILE_VOLUMES="${FILE_BASE}_${DN_VOLUME_RESOURCE}_volumes.txt"
-	FILE_POOL="${FILE_BASE}_${DN_VOLUME_RESOURCE}_pool.txt"
+	FILE_VOLUME_RESOURCE="${FILE_BASE}_${CN_VOLUME_RESOURCE}_1volres.txt"
+	FILE_NCPSERVER="${FILE_BASE}_${CN_VOLUME_RESOURCE}_ncpserver.txt"
+	FILE_VOLUMES="${FILE_BASE}_${CN_VOLUME_RESOURCE}_volumes.txt"
+	FILE_POOL="${FILE_BASE}_${CN_VOLUME_RESOURCE}_pool.txt"
 	CN_NCPSERVER="Unknown NCP Server"
 	CN_VOLUME="Unknown Volume"
 	CN_POOL="Unknown Pool"
 
 	# Query Volume Resource Objects
-	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$DN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" "Volume Resource"
+	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$CN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" "Volume Resource"
 
 	DN_NCPSERVER=$(grep -i ^nCSNCPServer: $FILE_VOLUME_RESOURCE | awk '{print $2}')
 	if [ -n "$DN_NCPSERVER" ]; then
@@ -572,19 +641,20 @@ do
 	validate_required_objects
 	validate_object_attributes
 	confirm_object_links
+	object_status
 
 	TOTAL_OBJ=$((TOTAL_OBJ + ERR_OBJ))
 	TOTAL_ATTR=$((TOTAL_ATTR + ERR_ATT))
 	TOTAL_LINK=$((TOTAL_LINK + ERR_LNK))
 	ERR_VR=$((ERR_OBJ + ERR_ATT + ERR_LNK))
 	TOTAL_ERRORS=$((TOTAL_ERRORS + ERR_OBJ + ERR_ATT + ERR_LNK))
-	[ $ERR_OBJ -gt 0 ] && log_summary "Missing Objects:" $ERR_OBJ
-	[ $ERR_ATT -gt 0 ] && log_summary "Missing Attributes:" $ERR_ATT
-	[ $ERR_LNK -gt 0 ] && log_summary "Mismatched Object Links:" $ERR_LNK
+	[ $ERR_OBJ -gt 0 ] && log_summary " Missing Objects:" $ERR_OBJ
+	[ $ERR_ATT -gt 0 ] && log_summary " Missing Attributes:" $ERR_ATT
+	[ $ERR_LNK -gt 0 ] && log_summary " Mismatched Object Links:" $ERR_LNK
 	if (( ERR_VR )); then
-		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Errors Found"
+		log_detail "$CN_VOLUME_RESOURCE Volume Resource Status: Errors Found"
 	else
-		log_detail "$DN_VOLUME_RESOURCE Volume Resource Status: Passed"
+		log_detail "$CN_VOLUME_RESOURCE Volume Resource Status: Passed"
 	fi
 	((TOTAL_VOLRES++))
 	[ $ERR_VR -gt 0 ] && ((TOTAL_VOLRES_ERRORS++))

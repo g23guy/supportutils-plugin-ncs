@@ -1,6 +1,7 @@
 -------------------------------------------------------------------
-Fri Feb 11 15:53:10 MST 2011 - jrecord@novell.com
+Fri Feb 11 16:25:10 MST 2011 - jrecord@novell.com
 
+-fixed resource->volume label
 -added multiple volume support
 -included resource status checking
 

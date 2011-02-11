@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110210.DEV.5
+VER=2.0.0-110210.DEV.6
 MODATE="2011 Feb 10"
 
 # todo
@@ -91,11 +91,11 @@ get_credentials() {
 	do
 		AUTHKEY="${CERT_DIR}/${DERFILE}"
 		if [ -s $AUTHKEY ]; then
-			log_summary "Using:" "$AUTHKEY"
+			log_summary "Using" "$AUTHKEY"
 			KEYFOUND=1
 			break
 		else
-			log_summary "File not found:" "$AUTHKEY"
+			log_summary "File not found" "$AUTHKEY"
 			KEYFOUND=0
 		fi
 	done
@@ -117,7 +117,7 @@ get_credentials() {
 	
 	if [ -z "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
 		if [ -x /opt/novell/ncs/bin/ncs-casautil ]; then
-			log_summary "Credentials:" "CASA"
+			log_summary "Credentials" "CASA"
 			NCSVR_ADMIN=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | head -1)
 			NCSVR_PASS=$(SECRET_ID=NovellClusterServices.Novell /opt/novell/ncs/bin/ncs-casautil -d | sed -e '1d' | tail -1)
 		else
@@ -129,7 +129,7 @@ get_credentials() {
 			exit 2
 		fi
 	else
-		log_summary "Credentials:" "Environment, NCSVR_ADMIN and NCSVR_PASS"
+		log_summary "Credentials" "Environment, NCSVR_ADMIN and NCSVR_PASS"
 	fi
 	if [ -z "$NCSVR_ADMIN" -a -n "$NCSVR_PASS" ]; then
 		log_detail "ERROR: NCSVR_ADMIN undefined"
@@ -166,12 +166,12 @@ ldap_cmd() {
 ldap_check() {
 	$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*" >/dev/null 2>&1
 	if [ $? -eq 0 ]; then
-		log_summary "LDAPS Connection:" "Success"
+		log_summary "LDAPS Connection" "Success"
 		return 0
 	else
-		log_summary "LDAPS Connection:" "FAILED"
-		log_summary "Preferred Server:" "$PREF_SERVER"
-		log_summary "DN:" "$NCSVR_ADMIN"
+		log_summary "LDAPS Connection" "FAILED"
+		log_summary "Preferred Server" "$PREF_SERVER"
+		log_summary "DN" "$NCSVR_ADMIN"
 		$LDAP_BIN ${AUTH_OPTIONS} -b "" -s base "objectclass=*"
 		log_detail
 		exit 1
@@ -283,13 +283,13 @@ get_cluster() {
 		TMPI=$(echo $I | sed -e 's/cn=//g;s/,.*//g')
 		DN_CLUSTERS="$TMPI $DN_CLUSTERS"
 	done
-	log_summary "Clusters:" "$DN_CLUSTERS"
+	log_summary "Clusters" "$DN_CLUSTERS"
 
 	DN_CLUSTER=$(grep -i "^dn:.*$CN_CLUSTER" $FILE_CLUSTERS | awk '{print $2}')
 	DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
 	#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT
-	log_summary "Node in Cluster:" "$CN_CLUSTER"
-	log_summary " Node Name:" "$CN_NODE"
+	log_summary "Node in Cluster" "$CN_CLUSTER"
+	log_summary " Node Name" "$CN_NODE"
 	if cluster view | grep -i epoch &>/dev/null; then
 		log_summary " Node Status" "Joined"
 	else

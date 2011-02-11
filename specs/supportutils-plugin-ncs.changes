@@ -1,4 +1,10 @@
 -------------------------------------------------------------------
+Fri Feb 11 15:53:10 MST 2011 - jrecord@novell.com
+
+-added multiple volume support
+-included resource status checking
+
+-------------------------------------------------------------------
 Fri Feb 04 10:59:57 MST 2011 - jrecord@novell.com
 
 -rewritten to support multiple clusters

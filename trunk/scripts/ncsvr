@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110211.DEV.20
+VER=2.0.0-110211.DEV.25
 MODATE="2011 Feb 11"
 
 # todo
@@ -203,12 +203,32 @@ check_attributes() {
 	SRC=$3
 
 	case $OBJ_TYPE in
-	VolumeResource) OBJ_LABEL="Volume Resource"; ATTRIB_LIST="nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum" ;;
-	Server) OBJ_LABEL="NCP Server"; ATTRIB_LIST="nCSNetWareCluster Resource networkAddress" ;;
-	Pool) OBJ_LABEL="Pool"; ATTRIB_LIST="nssfsShared nssfsPoolID hostServer hostResourceName" ;;
-	Volume) OBJ_LABEL="Volume"; ATTRIB_LIST="linuxNCPMountPoint nssfsPool DFS-Volume-Guid hostServer hostResourceName" ;;
-	Cluster) OBJ_LABEL="Cluster"; ATTRIB_LIST="nCSSharedDiskFlag nCSEmailFilter nCSEmailAddresses nCSPortNumber nCSNetworkAddress nCSRevision nCSCRMResourcePriority nCSCRMQuorumTimeout nCSCRMQuorum nCSGIPCMaxRetransmits nCSGIPCSlaveWatchdog nCSGIPCMasterWatchdog nCSGIPCTolerance nCSGIPCHeartbeat networkAddress" ;;
-	*) ATTRIB_LIST="" ;;
+	VolumeResource)
+		OBJ_LABEL="Volume Resource"
+		ATTRIB_LIST="nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum"
+	;;
+	Server)
+		OBJ_LABEL="NCP Server"
+		ATTRIB_LIST="nCSNetWareCluster Resource networkAddress"
+		if rpm -q novell-cifs &>/dev/null; then
+			ATTRIB_LIST="$ATTRIB_LIST nfapCIFSAttach nfapCIFSServerName nfapCIFSServerName"
+		fi
+	;;
+	Pool) 
+		OBJ_LABEL="Pool"
+		ATTRIB_LIST="nssfsShared nssfsPoolID hostServer hostResourceName"
+	;;
+	Volume) 
+		OBJ_LABEL="Volume"
+		ATTRIB_LIST="linuxNCPMountPoint nssfsPool DFS-Volume-Guid hostServer hostResourceName"
+	;;
+	Cluster) 
+		OBJ_LABEL="Cluster"
+		ATTRIB_LIST="nCSSharedDiskFlag nCSEmailFilter nCSEmailAddresses nCSPortNumber nCSNetworkAddress nCSRevision nCSCRMResourcePriority nCSCRMQuorumTimeout nCSCRMQuorum nCSGIPCMaxRetransmits nCSGIPCSlaveWatchdog nCSGIPCMasterWatchdog nCSGIPCTolerance nCSGIPCHeartbeat networkAddress"
+	;;
+	*) 
+		ATTRIB_LIST=""
+	;;
 	esac
 
 	MISSING_COUNT=0

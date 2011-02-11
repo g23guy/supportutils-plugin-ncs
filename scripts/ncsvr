@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110211.DEV.25
+VER=2.0.0-110211.DEV.26
 MODATE="2011 Feb 11"
 
 # todo
@@ -547,7 +547,7 @@ confirm_object_links() {
 			fi
 		done
 	else
-		RESULT="(Resource -> Volume) ${CN_NCPSERVER##cn=} <- Unknown"
+		RESULT="(Resource -> Volume) ${CN_VOLUME_RESOURCE} -> Unknown"
 		log_summary " FAILED" "$RESULT"
 		((ERR_LNK++))
 		RESULT="(Volume -> Pool)     Unknown -> ${CN_POOL##cn=}"

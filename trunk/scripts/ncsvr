@@ -1,6 +1,6 @@
 #!/bin/bash
-VER=2.0.0-110210.DEV.6
-MODATE="2011 Feb 10"
+VER=2.0.0-110211.DEV.5
+MODATE="2011 Feb 11"
 
 # todo
 # 1. put cluster ldap query in it's own file.
@@ -69,6 +69,7 @@ FMT_INTRO="%-20s %s\n"
 FMT_OBJ="%-35s %s\n"
 FMT_SHORT="%-9s %s\n"
 FMT_LONG="%-45s %s\n"
+FMT_QUERY="%-22s %s\n"
 FMT_CURRENT=$FMT_INTRO
 
 # function definitions
@@ -197,11 +198,11 @@ check_attributes() {
 	SRC=$3
 
 	case $OBJ_TYPE in
-	VolumeResource) ATTRIB_LIST="nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum" ;;
-	Server) ATTRIB_LIST="nCSNetWareCluster Resource networkAddress" ;;
-	Pool) ATTRIB_LIST="nssfsShared nssfsPoolID hostServer hostResourceName" ;;
-	Volume) ATTRIB_LIST="linuxNCPMountPoint nssfsPool DFS-Volume-Guid hostServer hostResourceName" ;;
-	Cluster)  ATTRIB_LIST="nCSSharedDiskFlag nCSEmailFilter nCSEmailAddresses nCSPortNumber nCSNetworkAddress nCSRevision nCSCRMResourcePriority nCSCRMQuorumTimeout nCSCRMQuorum nCSGIPCMaxRetransmits nCSGIPCSlaveWatchdog nCSGIPCMasterWatchdog nCSGIPCTolerance nCSGIPCHeartbeat networkAddress" ;;
+	VolumeResource) OBJ_LABEL="Volume Resource"; ATTRIB_LIST="nCSNCPServer nCSRevision nCSCRMFailoverMode nCSCRMFailbackMode nCSCRMPreferredNodes nCSCRMUnloadTimeout nCSCRMUnloadScript nCSCRMLoadTimeout nCSCRMLoadScript nCSCRMIgnoreQuorum" ;;
+	Server) OBJ_LABEL="NCP Server"; ATTRIB_LIST="nCSNetWareCluster Resource networkAddress" ;;
+	Pool) OBJ_LABEL="Pool"; ATTRIB_LIST="nssfsShared nssfsPoolID hostServer hostResourceName" ;;
+	Volume) OBJ_LABEL="Volume"; ATTRIB_LIST="linuxNCPMountPoint nssfsPool DFS-Volume-Guid hostServer hostResourceName" ;;
+	Cluster) OBJ_LABEL="Cluster"; ATTRIB_LIST="nCSSharedDiskFlag nCSEmailFilter nCSEmailAddresses nCSPortNumber nCSNetworkAddress nCSRevision nCSCRMResourcePriority nCSCRMQuorumTimeout nCSCRMQuorum nCSGIPCMaxRetransmits nCSGIPCSlaveWatchdog nCSGIPCMasterWatchdog nCSGIPCTolerance nCSGIPCHeartbeat networkAddress" ;;
 	*) ATTRIB_LIST="" ;;
 	esac
 
@@ -214,7 +215,7 @@ check_attributes() {
 		if [ -n "$FOUND" ]; then
 			((FOUND_COUNT++))
 		else
-			log_summary " ${OBJ_NAME}" "Attribute: ${ATTRIBUTE}"
+			log_summary " ${OBJ_NAME}" "$OBJ_LABEL Attribute: ${ATTRIBUTE}"
 			((MISSING_COUNT++))
 		fi
 	done
@@ -227,14 +228,14 @@ check_attributes() {
 			((FOUND_COUNT+=FOUND))
 		else
 			MISSING=$((DN_VOLUME_COUNT-FOUND))
-			log_summary " ${OBJ_NAME}" "Attribute: ${ATTRIBUTE}x${MISSING}"
+			log_summary " ${OBJ_NAME}" "$OBJ_LABEL Attribute: ${ATTRIBUTE}x${MISSING}"
 			((MISSING_COUNT+=MISSING))
 		fi
 	esac
 	if [ $MISSING_COUNT -gt 0 ]; then
-		log_summary " ${OBJ_NAME}" "MISSING $MISSING_COUNT of $ATTRIB_TOTAL attributes"
+		log_summary " ${OBJ_NAME}" "MISSING $MISSING_COUNT of $ATTRIB_TOTAL $OBJ_LABEL Attributes"
 	else
-		log_summary " ${OBJ_NAME}" "Found $FOUND_COUNT of $ATTRIB_TOTAL attributes"
+		log_summary " ${OBJ_NAME}" "Found $FOUND_COUNT of $ATTRIB_TOTAL $OBJ_LABEL Attributes"
 	fi
 
 	ERR_ATT=$((ERR_ATT + MISSING_COUNT))
@@ -265,12 +266,18 @@ get_cluster() {
 		if [ $CLUSTER_COUNT -eq 1 ]; then
 			CN_CLUSTER=$(grep -i ^cn: $FILE_CLUSTERS | awk '{print $2}')
 		else
-			((TOTAL_ERRORS++))
-			log_summary "ERROR" "Cannot determine node's cluster membership"
-			log_detail
-			show_summary
-			rm -rf $LOGROOT
-			exit 1
+			FILE_CONFIG_CLUSTER="/etc/opt/novell/ncs/clstrlib.conf"
+			if [ -s $FILE_CONFIG_CLUSTER ]; then
+				DN_CLUSTER=$(grep -A2 clusterDn $FILE_CONFIG_CLUSTER | tail -1 | cut -d\' -f2)
+				CN_CLUSTER=$(echo $DN_CLUSTER | sed -e 's/cn=//g;s/,.*//g')
+			else
+				((TOTAL_ERRORS++))
+				log_summary "ERROR" "Cannot determine node's cluster membership"
+				log_detail
+				show_summary
+				rm -rf $LOGROOT
+				exit 1
+			fi
 		fi
 	fi
 
@@ -286,14 +293,23 @@ get_cluster() {
 	log_summary "Clusters" "$DN_CLUSTERS"
 
 	DN_CLUSTER=$(grep -i "^dn:.*$CN_CLUSTER" $FILE_CLUSTERS | awk '{print $2}')
-	DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
-	#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT
-	log_summary "Node in Cluster" "$CN_CLUSTER"
-	log_summary " Node Name" "$CN_NODE"
-	if cluster view | grep -i epoch &>/dev/null; then
-		log_summary " Node Status" "Joined"
+	if [ -n "$DN_CLUSTER" ]; then
+		DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
+		#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT
+		log_summary "Node in Cluster" "$CN_CLUSTER"
+		log_summary " Node Name" "$CN_NODE"
+		if cluster view | grep -i epoch &>/dev/null; then
+			log_summary " Node Status" "Joined"
+		else
+			log_summary " Node Status" "Not Joined"
+		fi
 	else
-		log_summary " Node Status" "Not Joined"
+		((TOTAL_ERRORS++))
+		log_summary "ERROR" "Cannot determine node's cluster membership"
+		log_detail
+		show_summary
+		rm -rf $LOGROOT
+		exit 1
 	fi
 }
 
@@ -414,15 +430,6 @@ confirm_object_links() {
 		DN_NS2VL='ns2vl?'
 		DN_NS2CL='ns2cl?'
 	fi
-	if [ -s $FILE_VOLUME ]; then
-		DN_VL_LIST=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
-		DN_VL2NS_LIST=$(grep -i ^hostServer: $FILE_VOLUME | awk '{print $2}')
-		DN_VL2PL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
-	else
-		DN_VL='vl?'
-		DN_VL2NS='vl2ns?'
-		DN_VL2PL='vl2pl?'
-	fi
 	if [ -s $FILE_POOL ]; then
 		DN_PL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
 		DN_PL2NS=$(grep -i ^hostServer: $FILE_POOL | awk '{print $2}')
@@ -432,72 +439,78 @@ confirm_object_links() {
 	fi
 	#debug DN_VR DN_VR2NS DN_VR2VL DN_NS DN_NS2VR DN_NS2VL DN_NS2CL DN_VL DN_VL2NS DN_VL2PL DN_PL DN_PL2NS
 
+	RESULT="(Resource -> NCP) ${CN_VOLUME_RESOURCE} -> ${CN_NCPSERVER##cn=}"
 	if [ "$DN_VR2NS" = "$DN_NS" ]; then
-		log_summary " Pass" "${CN_VOLUME_RESOURCE} -> ${CN_NCPSERVER##cn=}"
+		log_summary " Pass" "$RESULT"
 	else
-		log_summary " FAILED" "${CN_VOLUME_RESOURCE} -> ${CN_NCPSERVER##cn=}"
+		log_summary " FAILED" "$RESULT"
 		((ERR_LNK++))
 	fi
 
+	RESULT="(Resource <- NCP) ${CN_VOLUME_RESOURCE} <- ${CN_NCPSERVER##cn=}"
 	if [ "$DN_NS2VR" = "$DN_VR" ]; then
-		log_summary " Pass" "${CN_VOLUME_RESOURCE} <- ${CN_NCPSERVER##cn=}"
+		log_summary " Pass" "$RESULT"
 	else
-		log_summary " FAILED" "${CN_VOLUME_RESOURCE} <- ${CN_NCPSERVER##cn=}"
+		log_summary " FAILED" "$RESULT"
 		((ERR_LNK++))
 	fi
 
-	for DN_VR2VL in $DN_VR2VL_LIST
-	do
-		CN_VOLUME=$(echo $DN_VR2VL | cut -d, -f1)
-		if echo $DN_VL_LIST | grep $DN_VR2VL &>/dev/null; then
-			log_summary " Pass" "${CN_VOLUME_RESOURCE} -> ${CN_VOLUME##cn=}"
-		else
-			log_summary " FAILED" "${CN_VOLUME_RESOURCE} -> ${CN_VOLUME##cn=}"
-			((ERR_LNK++))
-		fi
-	done
-
-	for DN_NS2VL in $DN_NS2VL_LIST
-	do
-		CN_VOLUME=$(echo $DN_NS2VL | cut -d, -f1)
-		if echo $DN_VL_LIST | grep $DN_NS2VL &>/dev/null; then
-			log_summary " Pass" "${CN_NCPSERVER##cn=} -> ${CN_VOLUME##cn=}"
-		else
-			log_summary " FAILED" "${CN_NCPSERVER##cn=} -> ${CN_VOLUME##cn=}"
-			((ERR_LNK++))
-		fi
-	done
-
-	for DN_VL2NS in $DN_VL2NS_LIST
-	do
-		CN_VOLUME=$(echo $DN_VL2NS | cut -d, -f1)
-		if echo $DN_VL_LIST | grep $DN_NS2VL &>/dev/null; then
-#		if [ "$DN_VL2NS" = "$DN_NS" ]; then
-			log_summary " Pass" "${CN_NCPSERVER##cn=} <- ${CN_VOLUME##cn=}"
-		else
-			log_summary " FAILED" "${CN_NCPSERVER##cn=} <- ${CN_VOLUME##cn=}"
-			((ERR_LNK++))
-		fi
-	done
-
+	RESULT="(NCP -> Cluster)  ${CN_NCPSERVER##cn=} -> ${CN_CLUSTER##cn=}"
 	if [ "$DN_NS2CL" = "$DN_CLUSTER" ]; then
-		log_summary " Pass" "${CN_NCPSERVER##cn=} -> ${CN_CLUSTER##cn=}"
+		log_summary " Pass" "$RESULT"
 	else
-		log_summary " FAILED" "${CN_NCPSERVER##cn=} -> ${CN_CLUSTER##cn=}"
+		log_summary " FAILED" "$RESULT"
 		((ERR_LNK++))
 	fi
 
-	if [ "$DN_VL2PL" = "$DN_PL" ]; then
-		log_summary " Pass" "${CN_VOLUME##cn=} -> ${CN_POOL##cn=}"
-	else
-		log_summary " FAILED" "${CN_VOLUME##cn=} -> ${CN_POOL##cn=}"
-		((ERR_LNK++))
-	fi
-
+	RESULT="(Pool -> NCP)     ${CN_POOL##cn=} -> ${CN_NCPSERVER##cn=}"
 	if [ "$DN_PL2NS" = "$DN_NS" ]; then
-		log_summary " Pass" "${CN_POOL##cn=} -> ${CN_NCPSERVER##cn=}"
+		log_summary " Pass" "$RESULT"
 	else
-		log_summary " FAILED" "${CN_POOL##cn=} -> ${CN_NCPSERVER##cn=}"
+		log_summary " FAILED" "$RESULT"
+		((ERR_LNK++))
+	fi
+
+# begin new volume(s) check
+	if [ -n "$DN_VOLUME_LIST" ]; then
+		SEQ_VL=1
+		for DN_VOLUME in $DN_VOLUME_LIST
+		do
+			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
+			FILE_VOLUME="${FILE_BASE}_${CN_VOLUME##cn=}_volume.txt"
+			if [ -s $FILE_VOLUME ]; then
+				DN_VL=$(grep -i ^dn: $FILE_VOLUME | awk '{print $2}')
+				DN_VL2NS=$(grep -i ^hostServer: $FILE_VOLUME | awk '{print $2}')
+				DN_VL2PL=$(grep -i ^nssfsPool: $FILE_VOLUME | awk '{print $2}')
+			else
+				DN_VL='vl?'
+				DN_VL2NS='vl2ns?'
+				DN_VL2PL='vl2pl?'
+			fi
+			RESULT="(Volume -> Pool)  ${CN_VOLUME##cn=} -> ${CN_POOL##cn=}"
+			if [ "$DN_VL2PL" = "$DN_PL" ]; then
+				log_summary " Pass" "$RESULT"
+			else
+				log_summary " FAILED" "$RESULT"
+				((ERR_LNK++))
+			fi
+			RESULT="(NCP -> Volume)   ${CN_NCPSERVER##cn=} -> ${CN_VOLUME##cn=}"
+			if echo $DN_NS2VL_LIST | grep $DN_VL &>/dev/null; then
+				log_summary " Pass" "$RESULT"
+			else
+				log_summary " FAILED" "$RESULT"
+				((ERR_LNK++))
+			fi
+			RESULT="(NCP <- Volume)   ${CN_NCPSERVER##cn=} <- ${CN_VOLUME##cn=}"
+			if [ "$DN_VL2NS" = "$DN_NS" ]; then
+				log_summary " Pass" "$RESULT"
+			else
+				log_summary " FAILED" "$RESULT"
+				((ERR_LNK++))
+			fi
+		done
+	else
+		log_summary " Volume Object(s)" "Unknown"
 		((ERR_LNK++))
 	fi
 	FMT_CURRENT=$FMT_PREV
@@ -595,7 +608,7 @@ TOTAL_VOLRES=$(echo "$DN_VOLUME_RESOURCE_LIST" | wc -l)
 log_summary "Volume Resources:" $TOTAL_VOLRES
 
 TOTAL_VOLRES=0
-FMT_CURRENT=$FMT_OBJ
+FMT_CURRENT=$FMT_QUERY
 for DN_VOLUME_RESOURCE in ${DN_VOLUME_RESOURCE_LIST}
 do
 	CN_VOLUME_RESOURCE=$(echo $DN_VOLUME_RESOURCE | cut -d, -f1)
@@ -645,6 +658,7 @@ do
 		[ -z "$DN_POOL" ] && rm $FILE_POOL || CN_POOL=$(echo $DN_POOL | cut -d, -f1)
 	fi
 
+	FMT_CURRENT=$FMT_OBJ
 	validate_required_objects
 	validate_object_attributes
 	confirm_object_links

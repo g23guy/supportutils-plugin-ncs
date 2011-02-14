@@ -1,6 +1,6 @@
 #!/bin/bash
-VER=2.0.0-110211.DEV.26
-MODATE="2011 Feb 11"
+VER=2.0.0-110214.DEV.3
+MODATE="2011 Feb 14"
 
 # todo
 # 1. put cluster ldap query in it's own file.
@@ -187,6 +187,7 @@ show_summary() {
 	log_detail
 	log_summary "Volume Resources Analyzed:" "$TOTAL_VOLRES"
 	log_summary "Volume Resources with Errors:" "$TOTAL_VOLRES_ERRORS"
+	log_detail
 	log_summary "Missing Objects:" "$TOTAL_OBJ"
 	log_summary "Missing Attributes:" "$TOTAL_ATTR"
 	log_summary "Mismatched Object Links:" "$TOTAL_LINK"
@@ -247,15 +248,17 @@ check_attributes() {
 	done
 	case $OBJ_TYPE in
 	VolumeResource|Server)
-		ATTRIBUTE="nCSVolumes"
-		ATTRIB_TOTAL=$((ATTRIB_TOTAL + DN_VOLUME_COUNT))
-		FOUND=$(grep -i ^${ATTRIBUTE}: $SRC | wc -l)
-		if [ $FOUND -eq $DN_VOLUME_COUNT ]; then
-			((FOUND_COUNT+=FOUND))
-		else
-			MISSING=$((DN_VOLUME_COUNT-FOUND))
-			MISSING_ATTRIB="$ATTRIBUTE $MISSING_ATTRIB"
-			((MISSING_COUNT+=MISSING))
+		if [ $DN_VOLUME_COUNT -gt 0 ]; then
+			ATTRIBUTE="nCSVolumes"
+			ATTRIB_TOTAL=$((ATTRIB_TOTAL + DN_VOLUME_COUNT))
+			FOUND=$(grep -i ^${ATTRIBUTE}: $SRC | wc -l)
+			if [ $FOUND -eq $DN_VOLUME_COUNT ]; then
+				((FOUND_COUNT+=FOUND))
+			else
+				MISSING=$((DN_VOLUME_COUNT-FOUND))
+				MISSING_ATTRIB="$ATTRIBUTE $MISSING_ATTRIB"
+				((MISSING_COUNT+=MISSING))
+			fi
 		fi
 	esac
 	if [ $MISSING_COUNT -gt 0 ]; then
@@ -312,7 +315,7 @@ get_cluster() {
 	fi
 
 	FILE_NODE="/etc/opt/novell/ncs/nodename"
-	[ -s $FILE_NODE ] && CN_NODE=$(cat $FILE_NODE) || CN_NODE='Unknown'
+	[ -s $FILE_NODE ] && CN_NODE=$(cat $FILE_NODE) || CN_NODE='Missing'
 	
 	DN_CLUSTERS=''
 	for I in $(grep -i "^dn:" $FILE_CLUSTERS | awk '{print $2}')
@@ -353,6 +356,20 @@ debug() {
 	echo
 }
 
+shadow_volume() {
+	RC=1
+	MOUNT_POINT=$(echo $MOUNT_ENTRY | awk '{print $3}')
+	NCP_CONF_FILE="/etc/opt/novell/ncpserv.conf"
+	if [ -s $NCP_CONF_FILE ]; then
+		SHADOW_VOLUME=$(grep "^SHADOW_VOLUME.*${MOUNT_POINT}$" $NCP_CONF_FILE)
+		if [ -n "$SHADOW_VOLUME" ]; then
+			RC=0
+		fi
+	fi
+	#debug MOUNT_ENTRY MOUNT_POINT SHADOW_VOLUME CN_VOLUME_NAME NCP_CONF_FILE
+	return $RC
+}
+
 validate_required_objects() {
 	log_detail "Checking Required Objects"
 	if [ -s $FILE_VOLUME_RESOURCE ]; then
@@ -372,7 +389,7 @@ validate_required_objects() {
 			((ERR_OBJ++))
 		fi
 	else
-		log_summary " NCP Server Object" "Unknown"
+		log_summary " NCP Server Object" "Missing"
 		((ERR_OBJ++))
 	fi
 	if [ -s $FILE_POOL ]; then
@@ -383,11 +400,10 @@ validate_required_objects() {
 			((ERR_OBJ++))
 		fi
 	else
-		log_summary " Pool Object" "Unknown"
+		log_summary " Pool Object" "Missing"
 		((ERR_OBJ++))
 	fi
 	if [ -n "$DN_VOLUME_LIST" ]; then
-		SEQ_VL=1
 		for DN_VOLUME in $DN_VOLUME_LIST
 		do
 			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
@@ -400,7 +416,7 @@ validate_required_objects() {
 			fi
 		done
 	else
-		log_summary " Volume Object(s)" "Unknown"
+		log_summary " Volume Object(s)" "Missing"
 		((ERR_OBJ++))
 	fi
 }
@@ -410,12 +426,12 @@ validate_object_attributes() {
 	if [ -s $FILE_VOLUME_RESOURCE ]; then
 		check_attributes VolumeResource "${CN_VOLUME_RESOURCE}" $FILE_VOLUME_RESOURCE 
 	else
-		log_summary "Volume Resource Object Missing" "Skip Attribute Check"
+		log_summary " Unidentified Volume Resource Object" "Skipping Attribute Check"
 	fi
 	if [ -s $FILE_NCPSERVER ]; then
 		check_attributes Server "${CN_NCPSERVER##cn=}" $FILE_NCPSERVER
 	else
-		log_summary "NCP Server Object Missing" "Skip Attribute Check"
+		log_summary " Unidentified NCP Server Object" "Skipping Attribute Check"
 	fi
 	if [ -s $FILE_POOL ]; then
 		check_attributes Pool "${CN_POOL##cn=}" $FILE_POOL
@@ -423,7 +439,6 @@ validate_object_attributes() {
 		log_summary " Unidentified Pool Object" "Skipping Attribute Check"
 	fi
 	if [ -n "$DN_VOLUME_LIST" ]; then
-		SEQ_VL=1
 		for DN_VOLUME in $DN_VOLUME_LIST
 		do
 			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
@@ -432,7 +447,6 @@ validate_object_attributes() {
 		done
 	else
 		log_summary " Unidentified Volume Object(s)" "Skipping Attribute Check"
-		((ERR_OBJ++))
 	fi
 }
 
@@ -501,9 +515,7 @@ confirm_object_links() {
 		((ERR_LNK++))
 	fi
 
-# begin new volume(s) check
 	if [ -n "$DN_VOLUME_LIST" ]; then
-		SEQ_VL=1
 		for DN_VOLUME in $DN_VOLUME_LIST
 		do
 			CN_VOLUME=$(echo $DN_VOLUME | cut -d, -f1)
@@ -547,34 +559,17 @@ confirm_object_links() {
 			fi
 		done
 	else
-		RESULT="(Resource -> Volume) ${CN_VOLUME_RESOURCE} -> Unknown"
+		RESULT="(Resource -> Volume) ${CN_VOLUME_RESOURCE} -> Missing Volume"
 		log_summary " FAILED" "$RESULT"
-		((ERR_LNK++))
-		RESULT="(Volume -> Pool)     Unknown -> ${CN_POOL##cn=}"
+		RESULT="(Volume -> Pool)     Missing Volume -> ${CN_POOL##cn=}"
 		log_summary " FAILED" "$RESULT"
-		((ERR_LNK++))
-		RESULT="(NCP -> Volume)      ${CN_NCPSERVER##cn=} -> Unknown"
+		RESULT="(NCP -> Volume)      ${CN_NCPSERVER##cn=} -> Missing Volume"
 		log_summary " FAILED" "$RESULT"
-		((ERR_LNK++))
-		RESULT="(NCP <- Volume)      ${CN_NCPSERVER##cn=} <- Unknown"
+		RESULT="(NCP <- Volume)      ${CN_NCPSERVER##cn=} <- Missing Volume"
 		log_summary " FAILED" "$RESULT"
-		((ERR_LNK++))
+		((ERR_LNK+=4))
 	fi
 	FMT_CURRENT=$FMT_PREV
-}
-
-shadow_volume() {
-	RC=1
-	MOUNT_POINT=$(echo $MOUNT_ENTRY | awk '{print $3}')
-	NCP_CONF_FILE="/etc/opt/novell/ncpserv.conf"
-	if [ -s $NCP_CONF_FILE ]; then
-		SHADOW_VOLUME=$(grep "^SHADOW_VOLUME.*${MOUNT_POINT}$" $NCP_CONF_FILE)
-		if [ -n "$SHADOW_VOLUME" ]; then
-			RC=0
-		fi
-	fi
-	#debug MOUNT_ENTRY MOUNT_POINT SHADOW_VOLUME CN_VOLUME_NAME NCP_CONF_FILE
-	return $RC
 }
 
 object_status() {
@@ -596,7 +591,7 @@ object_status() {
 		TMPVRS=$(echo $VRSTATUS | tr [:upper:] [:lower:])
 		[ "$TMPVRS" = "comatose" ] && ((ERR_STAT++))
 	else
-		log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Unknown"
+		log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Missing"
 	fi
 	NCP_LOAD="/var/opt/novell/ncs/${CN_VOLUME_RESOURCE}.load"
 	if [ -s $NCP_LOAD ]; then
@@ -690,18 +685,14 @@ do
 	ERR_ATT=0
 	ERR_LNK=0
 	ERR_STAT=0
-	LNK_VR2NS=0
-	LNK_VR2VL=0
-	LNK_NS2VL=0
-	LNK_VL2NS=0
 	FILE_BASE="${LOGROOT}/${CN_CLUSTER}_vr$((SEQ_VR++))"
 	FILE_VOLUME_RESOURCE="${FILE_BASE}_${CN_VOLUME_RESOURCE}_1volres.txt"
 	FILE_NCPSERVER="${FILE_BASE}_${CN_VOLUME_RESOURCE}_ncpserver.txt"
 	FILE_VOLUMES="${FILE_BASE}_${CN_VOLUME_RESOURCE}_volumes.txt"
 	FILE_POOL="${FILE_BASE}_${CN_VOLUME_RESOURCE}_pool.txt"
-	CN_NCPSERVER="Unknown NCP Server"
-	CN_VOLUME="Unknown Volume"
-	CN_POOL="Unknown Pool"
+	CN_NCPSERVER="Missing NCP Server"
+	CN_VOLUME="Missing Volume"
+	CN_POOL="Missing Pool"
 
 	# Query Volume Resource Objects
 	ldap_cmd "$FILE_VOLUME_RESOURCE" "$DN_CLUSTER" "(&(cn=$CN_VOLUME_RESOURCE)(objectClass=nCSVolumeResource))" " Query Volume Resource"
@@ -725,6 +716,8 @@ do
 		fi
 		DN_POOL=$(grep -i ^dn: $FILE_POOL | awk '{print $2}')
 		[ -z "$DN_POOL" ] && rm $FILE_POOL || CN_POOL=$(echo $DN_POOL | cut -d, -f1)
+	else
+		DN_VOLUME_COUNT=0
 	fi
 
 	FMT_CURRENT=$FMT_OBJ

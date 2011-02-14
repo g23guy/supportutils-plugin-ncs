@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0
+VER=2.0.1
 MODATE="2011 Feb 14"
 
 # todo
@@ -596,6 +596,7 @@ object_status() {
 		esac
 		TMPVRS=$(echo $VRSTATUS | tr [:upper:] [:lower:])
 		[ "$TMPVRS" = "comatose" ] && ((ERR_STAT++))
+		[ "$TMPVRS" = "alert" ] && ((ERR_STAT++))
 	else
 		log_summary " Volume Resource: $CN_VOLUME_RESOURCE" "Missing"
 	fi

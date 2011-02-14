@@ -1,6 +1,7 @@
 -------------------------------------------------------------------
-Fri Feb 11 16:25:10 MST 2011 - jrecord@novell.com
+Mon Feb 14 09:55:33 MST 2011 - jrecord@novell.com
 
+-fixed 0 pool & ncp errors
 -fixed resource->volume label
 -added multiple volume support
 -included resource status checking

@@ -1,5 +1,5 @@
 #!/bin/bash
-VER=2.0.0-110214.DEV.3
+VER=2.0.0-110214.DEV.10
 MODATE="2011 Feb 14"
 
 # todo
@@ -104,6 +104,7 @@ get_credentials() {
 
 	if [ $KEYFOUND = 0 ]; then
 		log_detail "ERROR: Missing *.der file for TLS authentication in $CERT_DIRECTORIES"
+		log_detail "       Consider creating a certificate with namconfig -k"
 		log_detail
 		((TOTAL_ERRORS++))
 		show_summary
@@ -134,15 +135,20 @@ get_credentials() {
 		log_summary "Credentials" "Environment, NCSVR_ADMIN and NCSVR_PASS"
 	fi
 	if [ -z "$NCSVR_ADMIN" -a -n "$NCSVR_PASS" ]; then
-		log_detail "ERROR: NCSVR_ADMIN undefined"
+		log_detail "ERROR: NCSVR_ADMIN is undefined"
 		log_detail "       Define both NCSVR_ADMIN and NCSVR_PASS"
 		log_detail
 		exit 4
 	elif [ -n "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
-		log_detail "ERROR: NCSVR_PASS undefined"
+		log_detail "ERROR: NCSVR_PASS is undefined"
 		log_detail "       Define both NCSVR_ADMIN and NCSVR_PASS"
 		log_detail
 		exit 6
+	elif [ -z "$NCSVR_ADMIN" -a -z "$NCSVR_PASS" ]; then
+		log_detail "ERROR: NCSVR_ADMIN and NCSVR_PASS are undefined"
+		log_detail "       Define both NCSVR_ADMIN and NCSVR_PASS"
+		log_detail
+		exit 8
 	fi
 
 	AUTH_OPTIONS="-e $AUTHKEY -D $NCSVR_ADMIN -w $NCSVR_PASS -h $PREF_SERVER"

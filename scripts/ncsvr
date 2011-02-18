@@ -1,11 +1,9 @@
 #!/bin/bash
-VER=2.0.1
-MODATE="2011 Feb 14"
+VER=2.0.1-1
+MODATE="2011 Feb 18"
 
-# todo
-# 1. put cluster ldap query in it's own file.
-# 2. read cn location from file's dn:
-# 3. check missing object cases, like volume and ncpserver together
+# Consider
+# 1. read cn location from file's dn:
 
 ##############################################################################
 #  ncsvr - Novell Cluster Service Volume Resource Plugin for Supportconfig
@@ -331,7 +329,7 @@ get_cluster() {
 	done
 	log_summary "Clusters" "$DN_CLUSTERS"
 
-	DN_CLUSTER=$(grep -i "^dn:.*$CN_CLUSTER" $FILE_CLUSTERS | awk '{print $2}')
+	DN_CLUSTER=$(grep -i "^dn:.*${CN_CLUSTER}," $FILE_CLUSTERS | awk '{print $2}')
 	if [ -n "$DN_CLUSTER" ]; then
 		DN_CLUSTER_PARENT=$(echo $DN_CLUSTER | sed -e "s/cn=${CN_CLUSTER},//")
 		#debug CN_CLUSTER DN_CLUSTER DN_CLUSTER_PARENT

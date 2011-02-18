@@ -15,7 +15,7 @@ License:      GPLv2
 Group:        Documentation/SuSE
 Autoreqprov:  on
 Version:      1.0
-Release:      3
+Release:      5.110218.PTF.1
 Source:       %{name}-%{version}.tar.gz
 Summary:      Supportconfig Plugin for Novell Cluster Service Volume Resources
 BuildRoot:    %{_tmppath}/%{name}-%{version}-build

@@ -1,4 +1,9 @@
 -------------------------------------------------------------------
+Fri Feb 18 10:07:58 MST 2011 - jrecord@novell.com
+
+-fixed (-601) volume resource query with multiple clusters
+
+-------------------------------------------------------------------
 Mon Feb 14 15:11:12 MST 2011 - jrecord@novell.com
 
 -included alert check
